@@ -2,6 +2,52 @@ import pygame
 from sys import exit
 import os
 
+# ===== Serial (ถ้าเปิดพอร์ตไม่ได้จะกลับไปใช้คีย์บอร์ดอัตโนมัติ) =====
+SERIAL_PORT = "COM7"     # แก้เป็นพอร์ตจริงของ ST-LINK VCP หรือ USB-Serial ที่ต่อ STM32
+SERIAL_BAUD = 115200
+SERIAL_ENABLED = True
+
+ser = None
+try:
+    import serial
+    ser = serial.Serial(port=SERIAL_PORT, baudrate=SERIAL_BAUD, timeout=0)  # timeout=0 = non-blocking
+except Exception as _e:
+    print(f"[serial] disabled ({_e})")
+    SERIAL_ENABLED = False
+
+
+def poll_serial_commands():
+    """
+    อ่านอักขระทั้งหมดที่เข้ามาในเฟรมนี้ (non-blocking)
+    คืนค่าเป็น list ของตัวอักษรที่อ่านได้ เช่น ['W','J',...]
+    """
+    if not SERIAL_ENABLED or ser is None:
+        return []
+
+    cmds = []
+    try:
+        data = ser.read(1024)
+        if data:
+            try:
+                s = data.decode('utf-8', errors='ignore')
+            except Exception:
+                s = ''.join(chr(b) for b in data if 32 <= b <= 126)
+            for ch in s:
+                if ch.strip() == '':
+                    continue
+                cmds.append(ch)
+    except Exception:
+        pass
+    return cmds
+
+
+# ---- Run impulse จาก serial D ----
+RUN_IMPULSE_MS = 250
+serial_run_ms = 0
+
+level = 1  # เลเวลเริ่มต้น
+
+
 # ============== helpers: slice by alpha gaps + align midbottom ==============
 def slice_by_alpha_regions(path, expected=None):
     sheet = pygame.image.load(path).convert_alpha()
@@ -37,6 +83,7 @@ def slice_by_alpha_regions(path, expected=None):
 
     return raw_frames
 
+
 def align_and_pad(frames, anchor="midbottom"):
     cropped = []
     for f in frames:
@@ -61,12 +108,14 @@ def align_and_pad(frames, anchor="midbottom"):
         aligned.append(canvas)
     return aligned
 
+
 def _load_animation_single(path, scale=3.0, expected=None):
     frames = slice_by_alpha_regions(path, expected=expected)
     frames = align_and_pad(frames, anchor="midbottom")
     if scale != 1.0 and frames:
         frames = [pygame.transform.scale_by(f, scale) for f in frames]
     return frames
+
 
 def load_animation_with_fallback(paths, scale=3.0, expected=None):
     last_err = None
@@ -81,10 +130,12 @@ def load_animation_with_fallback(paths, scale=3.0, expected=None):
         raise last_err
     raise FileNotFoundError(f"No valid asset found among: {paths}")
 
+
 def _dummy_frame():
     s = pygame.Surface((1, 1), pygame.SRCALPHA)
     s.fill((0, 0, 0, 0))
     return s
+
 
 def _ensure_animation_safety(anims: dict):
     """ให้ทุก state มีเฟรมเสมอ: ถ้าว่าง -> ใช้ idle; ถ้า idle ว่าง -> ใส่ dummy 1x1"""
@@ -128,6 +179,7 @@ CHAR_CONFIGS = {
     }
 }
 
+
 # ================================ Player ================================
 class Player(pygame.sprite.Sprite):
     def __init__(self, character: str, pos=(480, 420)):
@@ -160,6 +212,8 @@ class Player(pygame.sprite.Sprite):
         self.just_finished = None
         self.is_moving = False
 
+        self.external_move = False    # ธงวิ่งจาก serial (จะถูก consume รายเฟรม)
+
     def set_state(self, new_state):
         if self.dead and new_state != "death":
             return
@@ -171,6 +225,7 @@ class Player(pygame.sprite.Sprite):
         self.full_lock = active
         if active:
             self.is_moving = False
+            self.external_move = False
             if self.on_ground and not self.locked:
                 self.set_state("idle")
 
@@ -180,12 +235,18 @@ class Player(pygame.sprite.Sprite):
     def handle_input(self, keys):
         if self.full_lock or self.locked or self.dead:
             self.is_moving = False
+            self.external_move = False
             return
 
-        moving = (keys[pygame.K_LEFT] or keys[pygame.K_a] or
-                  keys[pygame.K_RIGHT] or keys[pygame.K_d])
-        self.is_moving = moving
+        moving_keys = (keys[pygame.K_LEFT] or keys[pygame.K_a] or
+                       keys[pygame.K_RIGHT] or keys[pygame.K_d])
 
+        # รวมคีย์บอร์ด + serial
+        moving = moving_keys or self.external_move
+        self.is_moving = moving
+        self.external_move = False  # consume ในเฟรมนี้
+
+        # กระโดดด้วยคีย์บอร์ด (serial กระโดดจัดใน main loop แล้ว)
         if (keys[pygame.K_SPACE] or keys[pygame.K_w] or keys[pygame.K_UP]) and self.on_ground:
             self.vel_y = -self.jump_power
             self.on_ground = False
@@ -264,6 +325,7 @@ class Player(pygame.sprite.Sprite):
         self.apply_gravity(ground_y)
         self.animate()
 
+
 # ================================ Enemy (mushroom) ================================
 class Enemy(pygame.sprite.Sprite):
     """วิ่งจากขวา -> หยุดด้านขวาผู้เล่น -> รอ 5 วิ นับ J"""
@@ -300,7 +362,7 @@ class Enemy(pygame.sprite.Sprite):
         self.facing = -1  # อยู่ขวาผู้เล่น => หันซ้าย
         self.just_finished = None  # 'attack' | 'hit' | 'death' | None
         self.locked = False
-        
+
     def set_state(self, st):
         if self.dead and st != "death":
             return
@@ -320,15 +382,13 @@ class Enemy(pygame.sprite.Sprite):
         delta = player.attack_pressed_total - self.player_attack_baseline
         player.attack_pressed_total = 0
         self.challenge_ms_left = None
-        player.set_challenge_lock(False)  # ปิดนับ J ชั่วคราวระหว่างเล่น sequence
-        # ❗ แก้สำคัญ: คืนค่าเป็นสตริง ไม่ใช่ print
+        player.set_challenge_lock(False)
         return "player_win" if delta >= 3 else "enemy_win"
 
     def think(self, player, dt_ms):
         if self.dead or self.locked:
             return
 
-        # ยังไม่เริ่มจับเวลา → วิ่งเข้าหาผู้เล่น (อนิเมชัน run) และล็อกผู้เล่น
         if self.challenge_ms_left is None:
             target_x = player.rect.centerx + self.stop_offset
             player.set_full_lock(True)
@@ -340,7 +400,6 @@ class Enemy(pygame.sprite.Sprite):
             else:
                 self.start_challenge(player)
         else:
-            # ระหว่างจับเวลา: ยืน idle
             self.set_state("idle")
 
     def animate(self):
@@ -363,7 +422,7 @@ class Enemy(pygame.sprite.Sprite):
             if self.frame_index >= end:
                 self.frame_index = end - 1
                 self.just_finished = "death"
-                self.kill()  # ออกจาก group เมื่อแอนิเมชันตายจบ
+                self.kill()
         else:
             if self.frame_index >= end:
                 self.frame_index = 0.0
@@ -389,62 +448,50 @@ pygame.display.set_caption("Run-in-place -> Reach point -> Spawn enemy")
 clock = pygame.time.Clock()
 GROUND_Y = 460
 
-# ====== วางไว้เหนือ game loop ======
 def load_scaled_alpha(path, size):
     img = pygame.image.load(path).convert_alpha()
     return pygame.transform.scale(img, size)
 
 class ParallaxBG:
     def __init__(self, W, H, layers):
-        # layers = [(path, speed), ...]  speed มาก = ขยับเร็ว (ชั้นหน้า)
         self.W, self.H = W, H
         self.layers = [(load_scaled_alpha(p, (W, H)), sp) for p, sp in layers]
         self.t = 0.0
 
     def update(self, moving: bool, dt_ms: int):
-        # วิ่งอยู่กับที่ → ให้ฉากไหลช้า ๆ
         if moving:
-            self.t += dt_ms * 0.12   # คูณเร็ว-ช้าได้
+            self.t += dt_ms * 0.12
 
     def draw(self, screen):
         for img, sp in self.layers:
-            # เลื่อนแบบวนซ้ำทั้งภาพ
             off = int(self.t * sp) % self.W
             screen.blit(img, (-off, 0))
             screen.blit(img, (self.W - off, 0))
 
-# ====== สร้างพื้นหลังหลัง pygame.init() ======
 parallax = ParallaxBG(
     W, H,
     [
-        ("graphics/background/sky.png",         0.00),  # ไกลสุด ขยับน้อย/ไม่ขยับ
+        ("graphics/background/sky.png",         0.00),
         ("graphics/background/graves.png",      0.24),
         ("graphics/background/back_trees.png",  0.26),
         ("graphics/background/crypt.png",       0.28),
         ("graphics/background/wall.png",        0.30),
-        ("graphics/background/ground.png",      0.34),  # พื้น
-        # ("graphics/background/bones.png",       0.18),  # องค์ประกอบหน้า
-        ("graphics/background/tree.png",        0.52),  # ต้นไม้หน้า ๆ
+        ("graphics/background/ground.png",      0.34),
+        ("graphics/background/tree.png",        0.52),
     ]
 )
 
-
 font = pygame.font.SysFont(None, 28)
 
-# --- Player ---
 selected = "wizard"
 player_group = pygame.sprite.GroupSingle(Player(selected, pos=(W//2 - 120, GROUND_Y)))
-
-# --- Enemy group (เริ่มต้นไม่มีศัตรู) ---
 enemy_group = pygame.sprite.GroupSingle()
 
-# --- Travel progress (วิ่งอยู่กับที่เพื่อสะสมระยะ) ---
-PROGRESS_TO_SPAWN = 1000         # ระยะที่ต้องวิ่งให้ครบ
-PROGRESS_SPEED_PER_MS = 0.25     # เพิ่มต่อมิลลิวินาทีเมื่อกำลังกดเดิน (~4 วิจะครบ 1000)
-progress = 0.0                   # ค่าเริ่มต้น
+PROGRESS_TO_SPAWN = 1000
+PROGRESS_SPEED_PER_MS = 0.25
+progress = 0.0
 
-# Orchestrator: จัดคิวแอนิเมชันตามผลลัพธ์
-sequence = None  # {"steps":[...], "idx":0, "started":False}
+sequence = None
 def start_sequence(steps):
     return {"steps": steps, "idx": 0, "started": False}
 
@@ -458,26 +505,50 @@ while True:
                 player_group.sprite.start_attack()
             if event.key == pygame.K_r:
                 player_group.sprite.revive()
-    
+
     keys = pygame.key.get_pressed()
 
+    # ---- ตัดสินใจล็อก/ปลดล็อกก่อน (เพื่อไม่ให้อินพุตทับกัน) ----
+    enemy = enemy_group.sprite
+    if enemy_group.sprite is not None:
+        player_group.sprite.set_full_lock(True)
+    else:
+        player_group.sprite.set_full_lock(False)
+        player_group.sprite.set_challenge_lock(False)
+
+    # ---- รับคำสั่งจาก serial ----
+    serial_cmds = poll_serial_commands()
+    if serial_cmds:
+        # กระโดด: W/w
+        if any(ch in ('W', 'w') for ch in serial_cmds):
+            p = player_group.sprite
+            if p.on_ground and not (p.full_lock or p.locked or p.dead):
+                p.vel_y = -p.jump_power
+                p.on_ground = False
+                p.set_state("jump")
+
+        # โจมตี: J/j  (นับสำหรับชาเลนจ์ด้วย)
+        if any(ch in ('J', 'j') for ch in serial_cmds):
+            player_group.sprite.start_attack()
+
+        # วิ่ง: D/d -> ให้แรงวิ่งชั่วคราว
+        if any(ch in ('D', 'd') for ch in serial_cmds):
+            p = player_group.sprite
+            if not (p.full_lock or p.locked or p.dead):
+                serial_run_ms = RUN_IMPULSE_MS
+
+    # แปลงแรงวิ่งที่เหลือให้เป็น external_move (จะถูก consume ใน handle_input)
+    p = player_group.sprite
+    if serial_run_ms > 0 and not (p.full_lock or p.locked or p.dead):
+        p.external_move = True
+        serial_run_ms -= dt
 
     # อัปเดต player/enemy
-    player = player_group.sprite
     player_group.update(keys, GROUND_Y)
-
-    enemy = enemy_group.sprite
-    enemy_group.update(player, dt)
-
-    # ล็อก/ปลดล็อกแบบทั่วๆ ไป: มีศัตรู -> ล็อกเดิน/โดด, ไม่มีศัตรู -> ปลดล็อก
-    if enemy_group.sprite is not None:
-        player.set_full_lock(True)
-    else:
-        player.set_full_lock(False)
-        player.set_challenge_lock(False)
+    enemy_group.update(player_group.sprite, dt)
 
     # สะสม progress เฉพาะตอนที่ยังไม่มีศัตรู + ผู้เล่นกำลังกดวิ่ง + ไม่มีคิว
-    if (enemy_group.sprite is None) and player.is_moving and not sequence:
+    if (enemy_group.sprite is None) and player_group.sprite.is_moving and not sequence:
         progress += PROGRESS_SPEED_PER_MS * dt
         if progress > PROGRESS_TO_SPAWN:
             progress = PROGRESS_TO_SPAWN
@@ -486,23 +557,23 @@ while True:
     if (enemy_group.sprite is None) and (progress >= PROGRESS_TO_SPAWN):
         new_enemy = Enemy(pos=(W + 80, GROUND_Y), stop_offset=300, speed=2, hp=2)
         enemy_group.add(new_enemy)
-        player.set_full_lock(True)     # ล็อกทันทีที่ศัตรูเกิด
-        player.set_challenge_lock(False)
+        player_group.sprite.set_full_lock(True)
+        player_group.sprite.set_challenge_lock(False)
         progress = 0.0
 
-    # จับเวลา 5 วิ (เฉพาะใน main loop)
+    # จับเวลา 5 วิ
     enemy = enemy_group.sprite
     if enemy and enemy.challenge_ms_left is not None:
         enemy.challenge_ms_left -= dt
         if enemy.challenge_ms_left <= 0 and sequence is None:
-            result = enemy.resolve_challenge(player)
+            result = enemy.resolve_challenge(player_group.sprite)
             if result == "player_win":
                 enemy.hp -= 1
                 if enemy.hp <= 0:
                     sequence = start_sequence(["player_attack", "enemy_death"])
                 else:
                     sequence = start_sequence(["player_attack", "enemy_hit"])
-            elif result == "enemy_win":
+            else:
                 sequence = start_sequence(["enemy_attack", "player_hit"])
 
     # Run sequence ทีละสเต็ป
@@ -512,9 +583,9 @@ while True:
 
         if step == "player_attack":
             if not sequence["started"]:
-                player.play_attack_anim()
+                player_group.sprite.play_attack_anim()
                 sequence["started"] = True
-            if player.just_finished == "attack":
+            if player_group.sprite.just_finished == "attack":
                 sequence["idx"] += 1
                 sequence["started"] = False
 
@@ -534,8 +605,8 @@ while True:
                 sequence["started"] = True
             if enemy.just_finished == "death":
                 sequence = None
-                player.set_full_lock(False)
-                player.set_challenge_lock(False)
+                player_group.sprite.set_full_lock(False)
+                player_group.sprite.set_challenge_lock(False)
 
         elif step == "enemy_attack":
             if not sequence["started"]:
@@ -548,9 +619,9 @@ while True:
 
         elif step == "player_hit":
             if not sequence["started"]:
-                player.start_hit()
+                player_group.sprite.start_hit()
                 sequence["started"] = True
-            if player.just_finished == "hit":
+            if player_group.sprite.just_finished == "hit":
                 sequence["idx"] += 1
                 sequence["started"] = False
 
@@ -561,14 +632,14 @@ while True:
 
             enemy = enemy_group.sprite
             if last_steps == ["player_attack", "enemy_death"]:
-                player.set_full_lock(False)
-                player.set_challenge_lock(False)
+                player_group.sprite.set_full_lock(False)
+                player_group.sprite.set_challenge_lock(False)
             else:
                 if enemy and not enemy.dead:
                     enemy.challenge_ms_left = enemy.challenge_ms_total
-                    enemy.player_attack_baseline = player.attack_pressed_total
-                    player.set_full_lock(True)
-                    player.set_challenge_lock(True)
+                    enemy.player_attack_baseline = player_group.sprite.attack_pressed_total
+                    player_group.sprite.set_full_lock(True)
+                    player_group.sprite.set_challenge_lock(True)
                     enemy.set_state("idle")
 
     # ----- kill-safe: กันคิวค้างเมื่อศัตรูถูก kill() ออกไปแล้ว -----
@@ -576,26 +647,20 @@ while True:
         curr_step = sequence["steps"][sequence["idx"]]
         if curr_step == "enemy_death" and enemy_group.sprite is None:
             sequence = None
-            player.set_full_lock(False)
-            player.set_challenge_lock(False)
+            player_group.sprite.set_full_lock(False)
+            player_group.sprite.set_challenge_lock(False)
 
     # ---- Draw ----
     screen.fill((30, 30, 30))
     pygame.draw.line(screen, (70, 70, 70), (0, GROUND_Y), (W, GROUND_Y), 2)
 
-    
     # --- วาดฉาก ---
-    parallax.update(player.is_moving, dt)  # ใช้ธง is_moving ที่คุณมีอยู่แล้ว
+    parallax.update(player_group.sprite.is_moving, dt)
     parallax.draw(screen)
 
     # --- วาดสปไรต์ ---
     player_group.draw(screen)
     enemy_group.draw(screen)
-    
-    player_group.draw(screen)
-    enemy_group.draw(screen)
-    
-    
 
     # UI: progress bar (วิ่งอยู่กับที่เพื่อไปถึงจุด)
     bar_w, bar_h = 320, 14
@@ -603,7 +668,7 @@ while True:
     pygame.draw.rect(screen, (80, 80, 80), (x, y, bar_w, bar_h), border_radius=6)
     fill_w = int(bar_w * (progress / PROGRESS_TO_SPAWN))
     pygame.draw.rect(screen, (180, 220, 120), (x, y, fill_w, bar_h), border_radius=6)
-    txt = font.render("Run to reach the point (press ←/→)", True, (200,200,200))
+    txt = font.render("Run: press ←/→ or send 'D' via serial | Jump: SPACE/W/↑ or 'W' via serial", True, (200,200,200))
     screen.blit(txt, (x, y + 20))
 
     # UI: enemy info

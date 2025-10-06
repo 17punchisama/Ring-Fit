@@ -2,7 +2,7 @@ import serial
 import time
 
 # แทน COM3 ด้วยพอร์ตจริงที่ STM32 ต่อไว้
-ser = serial.Serial(port="COM3", baudrate=115200, timeout=1)
+ser = serial.Serial(port="COM8", baudrate=115200, timeout=1)
 
 # รอให้พอร์ตพร้อม
 time.sleep(2)
