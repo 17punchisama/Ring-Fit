@@ -19,11 +19,11 @@ font = pygame.font.SysFont(None, 28)
 PLAYER_CLASS = "wizard"  # "wizard" -> ALT_KEY = 'M' / "swordman" -> ALT_KEY = 'P'
 ALT_KEY = 'M' if PLAYER_CLASS.lower() == 'wizard' else 'P'
 
-# ปุ่มที่ต้องกดสำหรับ "รอบชาเลนจ์นี้" ทั้ง 5 วินาที (เริ่มที่ J)
-challenge_expect_key = 'J'   # (จะสลับเฉพาะเลเวล >= 3 เท่านั้น)
+# ปุ่มที่ต้องกดสำหรับ "รอบชาเลนจ์นี้" (เริ่มที่ J)
+challenge_expect_key = 'J'   # จะ flip เป็น ALT_KEY แล้วกลับเป็น 'J' เฉพาะเลเวล >= 3
 
 # ----------------- Game variables -----------------
-level = 3
+level = 1
 coins_collected = 0
 COINS_TO_PASS = 20
 
@@ -92,13 +92,17 @@ def draw_hearts(screen, player, pos=(20,20), spacing=4):
         screen.blit(player.heart_images[idx], (x,y))
         x += player.heart_images[idx].get_width() + spacing
 
-# ----------------- Serial run impulse -----------------
+# ----------------- Serial run impulse (optional) -----------------
 RUN_IMPULSE_MS = 250
 serial_run_ms = 0
 
 # ----------------- Main loop -----------------
 while True:
     dt = clock.tick(60)
+
+    # กัน resolve/เริ่มรอบใหม่ซ้ำในเฟรมเดียว
+    frame_resolved = False
+    pending_start_next = False
 
     # ================= Events =================
     for event in pygame.event.get():
@@ -114,20 +118,26 @@ while True:
             # --- J ---
             if event.key == pygame.K_j:
                 if in_challenge:
-                    # เลเวล 2: นับ J เสมอ / เลเวล 3+: นับตาม expect
-                    if level == 2 or challenge_expect_key == 'J':
+                    # เลเวล 2 รับ J อย่างเดียว / เลเวล >=3 รับตาม expected key
+                    if (level == 2 and challenge_expect_key == 'J') or (level >= 3 and challenge_expect_key == 'J'):
                         p.attack_pressed_total += 1
                 elif not in_sequence and not (p.full_lock or p.locked or p.dead):
-                    p.play_attack_anim_named("attack")
+                    # นอกชาเลนจ์ → เล่นท่า attack
+                    if hasattr(p, "play_attack_anim_named"):
+                        p.play_attack_anim_named("attack")
+                    else:
+                        p.start_attack()
 
             # --- M (wizard) ---
             if event.key == pygame.K_m:
                 if in_challenge:
-                    # เลเวล 3+ เท่านั้นที่ใช้ ALT
                     if level >= 3 and ALT_KEY == 'M' and challenge_expect_key == 'M':
                         p.attack_pressed_total += 1
                 elif not in_sequence and not (p.full_lock or p.locked or p.dead):
-                    p.play_attack_anim_named("attack2")
+                    if hasattr(p, "play_attack_anim_named"):
+                        p.play_attack_anim_named("attack2")
+                    else:
+                        p.set_state("attack2")
 
             # --- P (swordman) ---
             if event.key == pygame.K_p:
@@ -135,7 +145,10 @@ while True:
                     if level >= 3 and ALT_KEY == 'P' and challenge_expect_key == 'P':
                         p.attack_pressed_total += 1
                 elif not in_sequence and not (p.full_lock or p.locked or p.dead):
-                    p.play_attack_anim_named("attack2")
+                    if hasattr(p, "play_attack_anim_named"):
+                        p.play_attack_anim_named("attack2")
+                    else:
+                        p.set_state("attack2")
 
             # Revive
             if event.key == pygame.K_r:
@@ -155,37 +168,47 @@ while True:
     p = player_group.sprite
     enemy = enemy_group.sprites()[0] if enemy_group.sprites() else None
 
-    # ================ Serial input ================
+    # ================ Serial input (ถ้ามีอุปกรณ์) ================
     serial_cmds = poll_serial_commands()
     if serial_cmds:
         in_challenge = bool(enemy and enemy.challenge_ms_left is not None)
         in_sequence  = (sequence is not None)
 
+        if any(ch in ('W','w') for ch in serial_cmds) and p.on_ground and not (p.full_lock or p.locked or p.dead):
+            p.vel_y = -p.jump_power
+            p.on_ground = False
+            p.set_state("jump")
+
         if any(ch in ('J','j') for ch in serial_cmds):
-            if in_challenge:
-                if level == 2 or challenge_expect_key == 'J':
-                    p.attack_pressed_total += 1
+            if in_challenge and ((level == 2 and challenge_expect_key == 'J') or (level >= 3 and challenge_expect_key == 'J')):
+                p.attack_pressed_total += 1
             elif not in_sequence and not (p.full_lock or p.locked or p.dead):
-                p.play_attack_anim_named("attack")
+                if hasattr(p, "play_attack_anim_named"):
+                    p.play_attack_anim_named("attack")
+                else:
+                    p.start_attack()
 
         if any(ch in ('M','m') for ch in serial_cmds):
-            if in_challenge:
-                if level >= 3 and ALT_KEY == 'M' and challenge_expect_key == 'M':
-                    p.attack_pressed_total += 1
+            if in_challenge and level >= 3 and ALT_KEY == 'M' and challenge_expect_key == 'M':
+                p.attack_pressed_total += 1
             elif not in_sequence and not (p.full_lock or p.locked or p.dead):
-                p.play_attack_anim_named("attack2")
+                if hasattr(p, "play_attack_anim_named"):
+                    p.play_attack_anim_named("attack2")
+                else:
+                    p.set_state("attack2")
 
         if any(ch in ('P','p') for ch in serial_cmds):
-            if in_challenge:
-                if level >= 3 and ALT_KEY == 'P' and challenge_expect_key == 'P':
-                    p.attack_pressed_total += 1
+            if in_challenge and level >= 3 and ALT_KEY == 'P' and challenge_expect_key == 'P':
+                p.attack_pressed_total += 1
             elif not in_sequence and not (p.full_lock or p.locked or p.dead):
-                p.play_attack_anim_named("attack2")
+                if hasattr(p, "play_attack_anim_named"):
+                    p.play_attack_anim_named("attack2")
+                else:
+                    p.set_state("attack2")
 
-        # ถ้าจะเปิดวิ่งจาก serial 'D' ค่อยปลดคอมเมนต์
-        # if any(ch in ('D','d') for ch in serial_cmds):
-        #     if not (p.full_lock or p.locked or p.dead):
-        #         serial_run_ms = RUN_IMPULSE_MS
+        if any(ch in ('D','d') for ch in serial_cmds):
+            if not (p.full_lock or p.locked or p.dead):
+                serial_run_ms = RUN_IMPULSE_MS
 
     if serial_run_ms > 0 and not (p.full_lock or p.locked or p.dead):
         p.external_move = True
@@ -234,6 +257,7 @@ while True:
             level = 2
             progress = 0
             level2_progress = 0
+            challenge_expect_key = 'J'  # เผื่อ safety
 
     # ============== Level 2 & 3: spawn/approach/challenge ==============
     if level in (2, 3):
@@ -247,8 +271,6 @@ while True:
         if (enemy is None) and (level2_progress >= LEVEL2_PROGRESS_MAX):
             if level == 2:
                 etype = "mushroom"
-                # เลเวล 2: รีเซ็ตปุ่มที่ต้องการให้เป็น J เสมอ
-                challenge_expect_key = 'J'
             else:  # level 3
                 if level3_kills >= LEVEL3_KILL_TARGET:
                     etype = None
@@ -262,7 +284,7 @@ while True:
 
     # ============== Enemy challenge countdown ==============
     enemy = enemy_group.sprites()[0] if enemy_group.sprites() else None
-    if enemy and enemy.challenge_ms_left is not None:
+    if enemy and enemy.challenge_ms_left is not None and not frame_resolved:
         enemy.challenge_ms_left -= dt
         if enemy.challenge_ms_left <= 0 and sequence is None:
             # ตัดสินผลรอบนี้
@@ -274,31 +296,34 @@ while True:
             if delta >= 3:
                 enemy.hp -= 1
 
-                # เลเวล 3+ เท่านั้นที่สลับปุ่ม / เลือกอนิเมชันตามปุ่มที่เพิ่งชนะ
+                # flip เฉพาะเลเวล >= 3 (เลเวล 2 บังคับ J)
                 if level >= 3:
                     just_used_key = challenge_expect_key
                     challenge_expect_key = ALT_KEY if challenge_expect_key == 'J' else 'J'
                     anim = "attack2" if (just_used_key == ALT_KEY) else "attack"
                 else:
-                    # เลเวล 2: ใช้ attack ตลอด
+                    challenge_expect_key = 'J'
                     anim = "attack"
 
                 if enemy.hp <= 0:
                     if level == 2:
                         level2_kills += 1
-                    elif level == 3:
+                    elif level >= 3:
                         level3_kills += 1
                     sequence = start_sequence(["player_attack","enemy_death"])
                 else:
                     sequence = start_sequence(["player_attack","enemy_hit"])
 
                 sequence["attack_anim"] = anim
-                print("[CHALLENGE] used:", just_used_key, "-> next:", challenge_expect_key, "anim:", sequence["attack_anim"])
+                frame_resolved = True
             else:
-                # แพ้รอบนี้ → flip ปุ่มเฉพาะเลเวล 3+
+                # แพ้: flip เฉพาะเลเวล >= 3
                 if level >= 3:
                     challenge_expect_key = ALT_KEY if challenge_expect_key == 'J' else 'J'
+                else:
+                    challenge_expect_key = 'J'
                 sequence = start_sequence(["enemy_attack","player_hit"])
+                frame_resolved = True
 
     # ============== Run sequence ==============
     if sequence and enemy:
@@ -307,14 +332,20 @@ while True:
         if step == "player_attack":
             if not sequence["started"]:
                 desired = sequence.get("attack_anim", "attack")
-                if desired not in ("attack","attack2") or desired not in player_group.sprite.animations:
+                if desired not in ("attack","attack2") or (not hasattr(p, "animations")) or (desired not in p.animations):
                     desired = "attack"
-                p.play_attack_anim_named(desired, ignore_locked=True)
-                sequence["started"] = True
-                print("[SEQ] start player_attack ->", desired, "| state:", p.state)
 
+                # เรียกครั้งเดียว
+                if hasattr(p, "play_attack_anim_named"):
+                    p.play_attack_anim_named(desired, ignore_locked=True)
+                else:
+                    p.locked = True
+                    p.set_state(desired)
+
+                sequence["started"] = True
+
+            # รอจนจบจริง ๆ
             if p.just_finished in ("attack","attack2"):
-                print("[SEQ] end player_attack <-", p.just_finished)
                 sequence["idx"] += 1
                 sequence["started"] = False
 
@@ -359,7 +390,7 @@ while True:
                 enemy.set_state("attack")
                 sequence["started"] = True
             if enemy.just_finished == "attack":
-                dmg = LEVEL3_ENEMY_DAMAGE if level == 3 else LEVEL2_ENEMY_DAMAGE
+                dmg = LEVEL3_ENEMY_DAMAGE if level >= 3 else LEVEL2_ENEMY_DAMAGE
                 p.start_hit(damage=dmg)
                 sequence["idx"] += 1
                 sequence["started"] = False
@@ -371,13 +402,12 @@ while True:
                 sequence["idx"] += 1
                 sequence["started"] = False
 
-        # จบคิว → ถ้ามอนยังอยู่ให้เริ่มชาเลนจ์รอบใหม่
+        # จบคิว → นัดเริ่มชาเลนจ์ใหม่ "เฟรมถัดไป"
         if sequence and sequence["idx"] >= len(sequence["steps"]):
-            print("[SEQ] finished steps:", sequence["steps"])
             sequence = None
             e2 = enemy_group.sprites()[0] if enemy_group.sprites() else None
             if e2 and not e2.dead:
-                e2.start_challenge(p)
+                pending_start_next = True
 
     # ============== Level up after kills ==============
     if level == 2 and level2_kills >= LEVEL2_KILL_TARGET:
@@ -385,15 +415,15 @@ while True:
         level = 3
         level2_progress = 0
         enemy_group.empty()
-        # เริ่มเลเวล 3 ให้เริ่ม expect จาก 'J'
-        challenge_expect_key = 'J'
+        challenge_expect_key = 'J'  # เริ่มรอบแรกที่ J
 
     if level == 3 and level3_kills >= LEVEL3_KILL_TARGET:
+        # ผ่านเลเวล 3
         enemy_group.empty()
         p.set_full_lock(False)
         p.set_challenge_lock(False)
 
-    # ----- Orphan sequence cleanup -----
+    # ----- Orphan sequence cleanup: ถ้า sequence ค้างแต่ไม่มีมอน → เคลียร์ -----
     if sequence is not None and not enemy_group.sprites():
         sequence = None
 
@@ -402,7 +432,6 @@ while True:
     in_sequence  = (sequence is not None)
     in_challenge = bool(enemy and enemy.challenge_ms_left is not None)
     in_approach  = bool(enemy and enemy.challenge_ms_left is None and enemy.state == "run")
-
     in_combat = bool(enemy) and (in_sequence or in_challenge or in_approach)
 
     p.set_full_lock(in_combat)
@@ -413,6 +442,13 @@ while True:
         p.set_challenge_lock(False)
         if p.on_ground and p.state not in ("idle","run"):
             p.set_state("idle")
+
+    # เริ่ม challenge ใหม่ถ้านัดไว้ (เฟรมถัดไป)
+    if pending_start_next:
+        e2 = enemy_group.sprites()[0] if enemy_group.sprites() else None
+        if e2 and not e2.dead:
+            e2.start_challenge(p)
+        pending_start_next = False
 
     # ================= Draw =================
     screen.fill((30,30,30))
@@ -452,10 +488,9 @@ while True:
         txt2 = font.render(f"Enemy HP: {enemy.hp}", True, (220,220,220))
         screen.blit(txt2, (20, 60))
         if enemy.challenge_ms_left:
-            # แสดงปุ่ม J เสมอในเลเวล 2 / สลับจริงในเลเวล 3+
-            exp_key_display = challenge_expect_key if level >= 3 else 'J'
             left = max(0, enemy.challenge_ms_left)//1000 + 1
-            txt3 = font.render(f"Challenge: press {exp_key_display} >=3 in {left}s", True, (255,210,160))
+            need = challenge_expect_key if level >= 3 else 'J'
+            txt3 = font.render(f"Challenge: press {need} >=3 in {left}s", True, (255,210,160))
             screen.blit(txt3, (20, 84))
 
     hint = font.render(f"J = attack, ALT = {ALT_KEY}, I = collect coin, R = Revive", True, (170,170,170))
