@@ -6,6 +6,7 @@ CHAR_CONFIGS = {
         "scale": 3.0,
         "speed": 2,
         "hp": 2,
+        "damage": 1,
         "assets": {
             "idle": ["graphics/enemy/mushroom/Idle.png"],
             "run": ["graphics/enemy/mushroom/Run.png"],
@@ -15,10 +16,26 @@ CHAR_CONFIGS = {
         },
         "anim_speed": {"idle":0.18, "run":0.24, "attack":0.22, "hit":0.18, "death":0.18}
     },
+        "flying eye": {
+        "scale": 3.0,
+        "speed": 2,
+        "hp": 2,
+        "damage": 1,
+        "assets": {
+            "idle": ["graphics/enemy/flying_eye/Flight.png"],
+            "run": ["graphics/enemy/flying_eye/Flight.png"],
+            "attack": ["graphics/enemy/flying_eye/Attack.png"],
+            "hit": ["graphics/enemy/flying_eye/Take Hit.png"],
+            "death": ["graphics/enemy/flying_eye/Death.png"],
+        },
+        "anim_speed": {"idle":0.18, "run":0.24, "attack":0.22, "hit":0.18, "death":0.18},
+        "hover_from_ground": 130
+    },
     "goblin": {
         "scale": 4.0,
         "speed": 2,
         "hp": 4,
+        "damage": 2,
         "assets": {
             "idle": ["graphics/enemy/goblin/Idle.png"],
             "run": ["graphics/enemy/goblin/Run.png"],
@@ -32,6 +49,7 @@ CHAR_CONFIGS = {
         "scale": 4.0,
         "speed": 2,
         "hp": 4,
+        "damage": 3,
         "assets": {
             "idle": ["graphics/enemy/skeleton/Idle.png"],
             "run": ["graphics/enemy/skeleton/Walk.png"],
@@ -65,6 +83,8 @@ class Enemy(pygame.sprite.Sprite):
         self.facing = -1
         self.just_finished = None
         self.locked = False
+        
+        self.damage = cfg.get("damage", 1)
 
         # animations
         self.animations = {state: load_animation_with_fallback(paths, scale=cfg["scale"])
@@ -76,6 +96,11 @@ class Enemy(pygame.sprite.Sprite):
         self.frame_index = 0.0
         self.image = self.animations[self.state][0]
         self.rect = self.image.get_rect(midbottom=pos)
+        
+        hover = cfg.get("hover_from_ground", 0)
+        if hover:
+            ground_y = pos[1]          # เราส่ง GROUND_Y มาเป็น pos[1] ตอน spawn
+            self.rect.bottom = ground_y - hover
 
 
     def set_state(self, state):

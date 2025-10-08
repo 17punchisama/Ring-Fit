@@ -12,11 +12,11 @@ CHAR_CONFIGS = {
             "run":    ["graphics/player/wizard/Run.png"],
             "jump":   ["graphics/player/wizard/Jump.png"],
             "attack": ["graphics/player/wizard/Attack2.png"],
-            "attack2": ["graphics/player/wizard/Attack1.png"],
+            "attack2":["graphics/player/wizard/Attack1.png"],
             "hit":    ["graphics/player/wizard/Hit.png"],
             "death":  ["graphics/player/wizard/Death.png"],
         },
-        # ใส่ความเร็วให้ attack2 ด้วยก็ได้ (ถ้าไม่มีจะใช้ default 0.18)
+        # ★ ใส่ความเร็วของ attack2 ด้วย
         "anim_speed": {"idle":0.15,"run":0.25,"jump":0.12,"attack":0.22,"attack2":0.22,"hit":0.18,"death":0.18},
     },
 }
@@ -59,6 +59,11 @@ class Player(pygame.sprite.Sprite):
         self.max_hp = 20
         self.hp = self.max_hp
 
+        # ★ เพิ่มตัวแปรสำหรับการเดินด้วย UART แบบค้าง
+        self.move_speed = 3          # ความเร็วขยับพิกัด
+        self.external_dir = 0        # -1 = ซ้าย, 0 = หยุด, 1 = ขวา
+        self.obstacle_lock = False
+
         self.heart_images = [
             pygame.image.load("graphics/ui/Hearts_Red_1.png").convert_alpha(),
             pygame.image.load("graphics/ui/Hearts_Red_2.png").convert_alpha(),
@@ -79,6 +84,7 @@ class Player(pygame.sprite.Sprite):
         if active:
             self.is_moving = False
             self.external_move = False
+            self.external_dir = 0      # ★ หยุดทิศทางภายนอกเมื่อโดน full lock
             if self.on_ground and not self.locked:
                 self.set_state("idle")
 
@@ -86,17 +92,28 @@ class Player(pygame.sprite.Sprite):
         self.challenge_lock = active
 
     def handle_input(self, keys):
-        if self.full_lock or self.locked or self.dead or getattr(self, "coin_lock", False):
+        if (self.full_lock or self.locked or self.dead or 
+            getattr(self, "coin_lock", False) or getattr(self, "obstacle_lock", False)):
             self.is_moving = False
             self.external_move = False
+            # ★ ไม่ยุ่ง external_dir ที่นี่ ให้ main เป็นคนเซ็ต/หมดเวลาเอง
             return
 
         moving_keys = (keys[pygame.K_LEFT] or keys[pygame.K_a] or
                        keys[pygame.K_RIGHT] or keys[pygame.K_d])
-        moving = moving_keys or self.external_move
+
+        # ★ มองว่ากำลังเดินถ้ามี key, หรือ external_move (เฟรมเดียว), หรือ external_dir ≠ 0 (จาก UART latch)
+        moving = moving_keys or self.external_move or (self.external_dir != 0)
         self.is_moving = moving
+
+        # ★ ถ้าต้องการ “ขยับตำแหน่งจริง” ด้วยสัญญาณ UART
+        if self.external_dir != 0:
+            self.rect.centerx += self.external_dir * self.move_speed
+
+        # เคลียร์ external_move ทุกเฟรม (external_dir จะถูกจัดการจาก main ตามตัวจับเวลา)
         self.external_move = False
 
+        # กระโดดคีย์บอร์ดปกติ
         if (keys[pygame.K_SPACE] or keys[pygame.K_w] or keys[pygame.K_UP]) and self.on_ground:
             self.vel_y = -self.jump_power
             self.on_ground = False
@@ -175,7 +192,7 @@ class Player(pygame.sprite.Sprite):
 
         self.frame_index += self.anim_speed.get(self.state, 0.18)
 
-        # ✅ รวม "attack2" ให้จบเหมือน "attack"
+        # ★ รวม "attack2" ให้ปิดลูปเหมือน "attack"
         if self.state in ("attack", "attack2", "hit"):
             if self.frame_index >= end:
                 self.frame_index = 0.0
