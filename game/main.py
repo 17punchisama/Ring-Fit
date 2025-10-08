@@ -26,7 +26,7 @@ ALT_KEY = 'M' if PLAYER_CLASS.lower() == 'wizard' else 'P'
 challenge_expect_key = 'J'
 
 # ---------- Game variables ----------
-level = 2
+level = 1
 coins_collected = 0
 COINS_TO_PASS = 10
 
@@ -109,11 +109,11 @@ def spawn_obstacle():
     obstacle_group.add(obstacle)
 
 # ---------- UART walk impulse (ให้การเดินลื่นเมื่อ UART ส่งครั้งละตัวอักษร) ----------
-RUN_IMPULSE_MS = 200
+RUN_IMPULSE_MS = 280
 serial_run_ms = 0
 serial_dir = 1
-IMPULSE_ADD_MS = 140
-IMPULSE_MAX_MS = 300
+IMPULSE_ADD_MS = 200
+IMPULSE_MAX_MS = 900
 
 # ---------- Main loop ----------
 while True:
@@ -230,7 +230,7 @@ while True:
 
         if any(ch in ('D','d') for ch in serial_cmds) and not (p.full_lock or p.locked or p.dead):
             serial_dir = 1
-            serial_run_ms = min(serial_run_ms + IMPULSE_ADD_MS, IMPULSE_MAX_MS)
+            serial_run_ms = min(max(serial_run_ms, RUN_IMPULSE_MS) + IMPULSE_ADD_MS, IMPULSE_MAX_MS)
 
         # กด I ผ่าน UART (ถ้ามี)
         if any(ch in ('I','i') for ch in serial_cmds):
@@ -247,7 +247,7 @@ while True:
 
     if serial_run_ms > 0 and not (p.full_lock or p.locked or p.dead):
         p.external_move = True
-        p.external_dir = serial_dir
+        p.external_dir = 0
         serial_run_ms -= dt
     else:
         p.external_dir = 0
