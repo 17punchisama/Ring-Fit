@@ -1,1 +1,2 @@
-# เก็บ progress เฉพาะตอนยังไม่มี sequence และยังไม่มี enemy และผู้เล่นกำลังวิ่ง
+    if PLAYER_CLASS == "wizard" :
+        profile_img = pygame.image.load(profile_path[0]).convert_alpha()
