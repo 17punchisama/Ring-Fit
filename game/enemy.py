@@ -128,7 +128,7 @@ class Enemy(pygame.sprite.Sprite):
         self.damage = cfg.get("damage", 1)
 
         self.dead = False
-        self.challenge_ms_total = 5000
+        self.challenge_ms_total = 8000
         self.challenge_ms_left = None
         self.player_attack_baseline = 0
         self.facing = -1

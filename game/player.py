@@ -18,6 +18,21 @@ CHAR_CONFIGS = {
         },
         "anim_speed": {"idle":0.15,"run":0.25,"jump":0.12,"attack":0.22,"attack2":0.22,"hit":0.18,"death":0.18},
     },
+    "swordman": {
+        "scale": 3.0,
+        "speed": 0,
+        "jump_power": 14,
+        "assets": {
+                "idle":   ["graphics/player/swordman/Idle.png"],
+                "run":    ["graphics/player/swordman/Run.png"],
+                "jump":   ["graphics/player/swordman/Jump.png"],
+                "attack": ["graphics/player/swordman/Attack2.png"],
+                "attack2":["graphics/player/swordman/Attack1.png"],
+                "hit":    ["graphics/player/swordman/Hit.png"],
+                "death":  ["graphics/player/swordman/Death.png"],
+        },
+        "anim_speed": {"idle":0.15,"run":0.25,"jump":0.12,"attack":0.22,"attack2":0.22,"hit":0.18,"death":0.18},
+    },
 }
 
 def _dummy_frame():

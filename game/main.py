@@ -20,7 +20,7 @@ GROUND_Y = 460
 font = pygame.font.SysFont(None, 28)
 
 # ---------- Player class / alt key ----------
-PLAYER_CLASS = "wizard"
+PLAYER_CLASS = "swordman"
 ALT_KEY = 'M' if PLAYER_CLASS.lower() == 'wizard' else 'P'
 
 # ใช้เฉพาะเลเวล >= 3 เวลาอยู่ใน challenge (เริ่มที่ J)
@@ -71,7 +71,7 @@ L3_MONSTER_VS_OBS = 0.50
 L4_MONSTER_VS_OBS = 0.75
 
 # ---------- Sprite groups ----------
-player_group = pygame.sprite.GroupSingle(Player("wizard", (500, GROUND_Y)))
+player_group = pygame.sprite.GroupSingle(Player(PLAYER_CLASS, (500, GROUND_Y)))
 coin_group = pygame.sprite.Group()
 enemy_group = pygame.sprite.Group()
 obstacle_group = pygame.sprite.Group()
@@ -617,7 +617,7 @@ while True:
         if enemy.challenge_ms_left:
             left = max(0, enemy.challenge_ms_left)//1000 + 1
             need_key = challenge_expect_key if level >= 3 else 'J'
-            txt3 = font.render(f"Challenge: press {need_key} >=3 in {left}s", True, (255,210,160))
+            txt3 = font.render(f"Challenge: press {need_key} >=3 in {left}s", True, (0,0,0))
             screen.blit(txt3, (20, 84))
 
             # ★ แสดง delta แบบเรียลไทม์
