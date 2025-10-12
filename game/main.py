@@ -27,7 +27,7 @@ ALT_KEY = 'M' if PLAYER_CLASS.lower() == 'wizard' else 'P'
 challenge_expect_key = 'J'
 
 # ---------- Game variables ----------
-level = 1
+level = 3
 coins_collected = 0
 COINS_TO_PASS = 10
 
@@ -47,6 +47,8 @@ level5_kills_total = 0
 level5_cycle_kills = 0
 LEVEL5_CYCLE_TARGET = 5
 level5_force_boss_next = False
+
+# delta = 0
 
 # รายชื่อบอสที่เลเวล 5 จะสุ่ม (ตอนนี้มีแค่ golem ให้รันได้เลยก่อน)
 LEVEL5_BOSSES = ["evil", "neon phantom", "gorgon"]  # ถ้าเพิ่มบอสใหม่ใน enemy.py แล้ว ใส่ชื่อเพิ่มในลิสต์นี้
@@ -75,6 +77,7 @@ enemy_group = pygame.sprite.Group()
 obstacle_group = pygame.sprite.Group()
 projectile_group = pygame.sprite.Group()  # ★ ลูกไฟ
 
+profile_path = ["graphics/ui/wizard_profile.png"]
 # Guide (ใช้กับเลเวล 1 เท่านั้น)
 animations_dict = {
     "collect_coin": "graphics/guide/collect_coin.png",
@@ -409,7 +412,6 @@ while True:
             
             need_delta = getattr(enemy, "required_delta", 3)
 
-
             if delta >= need_delta:
                 enemy.hp -= 1
 
@@ -580,7 +582,7 @@ while True:
 
     # Progress bar
     bar_w, bar_h = 320, 14
-    x, y = 20, 16
+    x, y = 620, 16
     pygame.draw.rect(screen,(80,80,80),(x,y,bar_w,bar_h),border_radius=6)
     if level == 1:
         fill_w = int(bar_w * (progress / PROGRESS_TO_SPAWN))
@@ -588,34 +590,46 @@ while True:
         fill_w = int(bar_w * (level2_progress / LEVEL2_PROGRESS_MAX))
     pygame.draw.rect(screen,(180,220,120),(x,y,fill_w,bar_h),border_radius=6)
 
+    
+    # if PLAYER_CLASS == "wizard" :
+    #     profile_img = pygame.image.load(profile_path[0]).convert_alpha()
     # Hearts
     draw_hearts(screen, p, pos=(20,20), spacing=4)
 
     # Text
     if level == 1:
-        txt = font.render(f"Level {level} - Coins {coins_collected}/{COINS_TO_PASS}", True, (200,200,200))
+        txt = font.render(f"Level {level} - Coins {coins_collected}/{COINS_TO_PASS}", True, (0,0,0))
     elif level == 2:
-        txt = font.render(f"Level {level} - Kills {level2_kills}/{LEVEL2_KILL_TARGET}", True, (200,200,200))
+        txt = font.render(f"Level {level} - Kills {level2_kills}/{LEVEL2_KILL_TARGET}", True, (0,0,0))
     elif level == 3:
-        txt = font.render(f"Level {level} - Kills {level3_kills}/{LEVEL3_KILL_TARGET}", True, (200,200,200))
+        txt = font.render(f"Level {level} - Kills {level3_kills}/{LEVEL3_KILL_TARGET}", True, (0,0,0))
     elif level == 4:
-        txt = font.render(f"Level {level} - Kills {level4_kills}/{LEVEL4_KILL_TARGET}", True, (200,200,200))
+        txt = font.render(f"Level {level} - Kills {level4_kills}/{LEVEL4_KILL_TARGET}", True, (0,0,0))
     else :  # level 5
-        txt = font.render(f"Level {level} - Kills {level5_kills_total} (boss every {LEVEL5_CYCLE_TARGET})", True, (200,200,200))
+        txt = font.render(f"Level {level} - Kills {level5_kills_total} (boss every {LEVEL5_CYCLE_TARGET})", True, (0,0,0))
     screen.blit(txt, (x, y+20))
-
+    
     # Challenge HUD
     enemy = enemy_group.sprites()[0] if enemy_group.sprites() else None
     if enemy:
-        txt2 = font.render(f"Enemy HP: {enemy.hp}", True, (220,220,220))
+        txt2 = font.render(f"Enemy HP: {enemy.hp}", True, (0,0,0))
         screen.blit(txt2, (20, 60))
         if enemy.challenge_ms_left:
             left = max(0, enemy.challenge_ms_left)//1000 + 1
-            need = challenge_expect_key if level >= 3 else 'J'
-            txt3 = font.render(f"Challenge: press {need} >=3 in {left}s", True, (255,210,160))
+            need_key = challenge_expect_key if level >= 3 else 'J'
+            txt3 = font.render(f"Challenge: press {need_key} >=3 in {left}s", True, (255,210,160))
             screen.blit(txt3, (20, 84))
 
-    hint = font.render(f"J = attack, ALT = {ALT_KEY}, I = collect coin, R = Revive", True, (170,170,170))
-    screen.blit(hint, (20, 110))
+            # ★ แสดง delta แบบเรียลไทม์
+            current_delta = max(0, p.attack_pressed_total - enemy.player_attack_baseline)
+            need_total = getattr(enemy, "required_delta", 3)
+            txt_delta = font.render(f"Count: {current_delta}/{need_total}", True, (0,0,0))
+            screen.blit(txt_delta, (20, 108))
+
+    # ขยับ hint ลงหน่อยกันชน
+    hint = font.render(f"J = attack, ALT = {ALT_KEY}, I = collect coin, R = Revive", True, (0,0,0))
+    screen.blit(hint, (20, 132))
+
+    
 
     pygame.display.flip()
