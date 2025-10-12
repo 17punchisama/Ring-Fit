@@ -8,15 +8,14 @@ CHAR_CONFIGS = {
         "speed": 0,
         "jump_power": 14,
         "assets": {
-            "idle":   ["graphics/player/wizard/Idle.png"],
-            "run":    ["graphics/player/wizard/Run.png"],
-            "jump":   ["graphics/player/wizard/Jump.png"],
-            "attack": ["graphics/player/wizard/Attack2.png"],
-            "attack2":["graphics/player/wizard/Attack1.png"],
-            "hit":    ["graphics/player/wizard/Hit.png"],
-            "death":  ["graphics/player/wizard/Death.png"],
+                "idle":   ["graphics/player/wizard/Idle.png"],
+                "run":    ["graphics/player/wizard/Run.png"],
+                "jump":   ["graphics/player/wizard/Jump.png"],
+                "attack": ["graphics/player/wizard/Attack2.png"],
+                "attack2":["graphics/player/wizard/Attack1.png"],
+                "hit":    ["graphics/player/wizard/Hit.png"],
+                "death":  ["graphics/player/wizard/Death.png"],
         },
-        # ★ ใส่ความเร็วของ attack2 ด้วย
         "anim_speed": {"idle":0.15,"run":0.25,"jump":0.12,"attack":0.22,"attack2":0.22,"hit":0.18,"death":0.18},
     },
 }
@@ -54,15 +53,15 @@ class Player(pygame.sprite.Sprite):
 
         self.is_moving = False
         self.external_move = False
+        self.external_dir = 0
         self.coin_lock = False
+        self.obstacle_lock = False
 
         self.max_hp = 20
         self.hp = self.max_hp
 
-        # ★ เพิ่มตัวแปรสำหรับการเดินด้วย UART แบบค้าง
-        self.move_speed = 3          # ความเร็วขยับพิกัด
-        self.external_dir = 0        # -1 = ซ้าย, 0 = หยุด, 1 = ขวา
-        self.obstacle_lock = False
+        # ★ i-frame กันโดนซ้ำหลังโดนดาเมจ
+        self.iframe_ms = 0          # นับถอยหลังหน่วย ms
 
         self.heart_images = [
             pygame.image.load("graphics/ui/Hearts_Red_1.png").convert_alpha(),
@@ -84,7 +83,6 @@ class Player(pygame.sprite.Sprite):
         if active:
             self.is_moving = False
             self.external_move = False
-            self.external_dir = 0      # ★ หยุดทิศทางภายนอกเมื่อโดน full lock
             if self.on_ground and not self.locked:
                 self.set_state("idle")
 
@@ -92,28 +90,17 @@ class Player(pygame.sprite.Sprite):
         self.challenge_lock = active
 
     def handle_input(self, keys):
-        if (self.full_lock or self.locked or self.dead or 
-            getattr(self, "coin_lock", False) or getattr(self, "obstacle_lock", False)):
+        if self.full_lock or self.locked or self.dead or getattr(self, "coin_lock", False) or getattr(self,"obstacle_lock",False):
             self.is_moving = False
             self.external_move = False
-            # ★ ไม่ยุ่ง external_dir ที่นี่ ให้ main เป็นคนเซ็ต/หมดเวลาเอง
             return
 
         moving_keys = (keys[pygame.K_LEFT] or keys[pygame.K_a] or
                        keys[pygame.K_RIGHT] or keys[pygame.K_d])
-
-        # ★ มองว่ากำลังเดินถ้ามี key, หรือ external_move (เฟรมเดียว), หรือ external_dir ≠ 0 (จาก UART latch)
-        moving = moving_keys or self.external_move or (self.external_dir != 0)
+        moving = moving_keys or self.external_move
         self.is_moving = moving
-
-        # ★ ถ้าต้องการ “ขยับตำแหน่งจริง” ด้วยสัญญาณ UART
-        if self.external_dir != 0:
-            self.rect.centerx += self.external_dir * self.move_speed
-
-        # เคลียร์ external_move ทุกเฟรม (external_dir จะถูกจัดการจาก main ตามตัวจับเวลา)
         self.external_move = False
 
-        # กระโดดคีย์บอร์ดปกติ
         if (keys[pygame.K_SPACE] or keys[pygame.K_w] or keys[pygame.K_UP]) and self.on_ground:
             self.vel_y = -self.jump_power
             self.on_ground = False
@@ -123,11 +110,9 @@ class Player(pygame.sprite.Sprite):
             self.set_state("run" if moving else "idle")
 
     def start_attack(self):
-        # ระหว่างชาเลนจ์: กด J แล้ว "นับ" อย่างเดียว
         if not self.dead and self.challenge_lock:
             self.attack_pressed_total += 1
             return
-        # นอกชาเลนจ์: โจมตีปกติ
         if not self.dead and not self.locked:
             self.play_attack_anim()
 
@@ -137,7 +122,6 @@ class Player(pygame.sprite.Sprite):
             self.set_state("attack")
 
     def play_attack_anim_named(self, name: str, ignore_locked=True):
-        """เล่นอนิเมชันโจมตีเฉพาะชื่อ (attack / attack2) หนึ่งรอบแบบล็อก แล้วให้ animate() ปลดเองตอนจบ"""
         if self.dead:
             return
         if self.locked and not ignore_locked:
@@ -159,11 +143,17 @@ class Player(pygame.sprite.Sprite):
         self.vel_y = 0.0
         self.on_ground = True
         self.just_finished = None
+        self.iframe_ms = 0
         self.set_state("idle")
 
     def start_hit(self, damage=1):
+        # ★ กันโดนซ้ำถ้ายังอยู่ในช่วง i-frame
+        if self.iframe_ms > 0:
+            return
         if not self.dead:
             self.hp -= damage
+            # เริ่ม i-frame ~0.6 วินาที (ปรับได้)
+            self.iframe_ms = 600
             if self.hp <= 0:
                 self.hp = 0
                 self.start_death()
@@ -192,8 +182,7 @@ class Player(pygame.sprite.Sprite):
 
         self.frame_index += self.anim_speed.get(self.state, 0.18)
 
-        # ★ รวม "attack2" ให้ปิดลูปเหมือน "attack"
-        if self.state in ("attack", "attack2", "hit"):
+        if self.state in ("attack","attack2","hit"):
             if self.frame_index >= end:
                 self.frame_index = 0.0
                 self.just_finished = self.state
@@ -201,7 +190,7 @@ class Player(pygame.sprite.Sprite):
                 self.set_state("idle" if self.on_ground else "jump")
         elif self.state == "death":
             if self.frame_index >= end:
-                self.frame_index = end - 1
+                self.frame_index = end-1
                 self.just_finished = "death"
         else:
             if self.frame_index >= end:
@@ -212,7 +201,11 @@ class Player(pygame.sprite.Sprite):
         self.image = surf
         self.rect = self.image.get_rect(midbottom=midbottom)
 
-    def update(self, keys, ground_y):
+    def update(self, keys, ground_y, dt_ms=None):
+        # ★ นับถอยหลัง i-frame ตามเวลาจริง
+        if self.iframe_ms > 0:
+            self.iframe_ms = max(0, self.iframe_ms - (dt_ms if dt_ms is not None else 16))
+
         self.handle_input(keys)
         self.apply_gravity(ground_y)
         self.animate()
