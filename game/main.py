@@ -27,7 +27,7 @@ ALT_KEY = 'M' if PLAYER_CLASS.lower() == 'wizard' else 'P'
 challenge_expect_key = 'J'
 
 # ---------- Game variables ----------
-level = 5
+level = 1
 coins_collected = 0
 COINS_TO_PASS = 10
 
