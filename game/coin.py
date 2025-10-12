@@ -2,7 +2,7 @@ import pygame
 from animation_helper import slice_by_alpha_regions, align_and_pad
 
 class Coin(pygame.sprite.Sprite):
-    def __init__(self, pos, sprite_sheet_path, scale=3.0):
+    def __init__(self, pos, sprite_sheet_path, scale=2.0):
         super().__init__()
         raw_frames = slice_by_alpha_regions(sprite_sheet_path)
         frames = align_and_pad(raw_frames)

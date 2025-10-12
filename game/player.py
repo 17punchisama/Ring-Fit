@@ -4,7 +4,7 @@ from animation_helper import load_animation_with_fallback, _ensure_animation_saf
 
 CHAR_CONFIGS = {
     "wizard": {
-        "scale": 3.0,
+        "scale": 2.0,
         "speed": 0,
         "jump_power": 14,
         "assets": {
@@ -19,7 +19,7 @@ CHAR_CONFIGS = {
         "anim_speed": {"idle":0.15,"run":0.25,"jump":0.12,"attack":0.22,"attack2":0.22,"hit":0.18,"death":0.18},
     },
     "swordman": {
-        "scale": 3.0,
+        "scale": 2.0,
         "speed": 0,
         "jump_power": 14,
         "assets": {

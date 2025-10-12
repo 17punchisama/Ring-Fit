@@ -37,19 +37,20 @@ class Guide(pygame.sprite.Sprite):
             self.state = state
             self.frame_index = 0.0
 
-    def update(self):
-        """
-        update animation frame index
-        """
-        if not self.active:
-            return  # ถ้า inactive จะไม่ update frame
+    def update(self, dt=None):
+            """อัปเดตแอนิเมชัน รองรับ dt (ms)"""
+            if not self.active:
+                return
 
-        frames = self.animations[self.state]
-        if not frames:
-            return
+            frames = self.animations[self.state]
+            if not frames:
+                return
 
-        self.frame_index += self.anim_speed
-        if self.frame_index >= len(frames):
-            self.frame_index = 0.0
+            # ถ้าไม่มี dt ให้ขยับปกติ; ถ้ามี dt ให้สเกลตาม 60fps ≈ 16ms/เฟรม
+            time_scale = (dt / 16.0) if dt is not None else 1.0
+            self.frame_index += self.anim_speed * time_scale
 
-        self.image = frames[int(self.frame_index)]
+            if self.frame_index >= len(frames):
+                self.frame_index = 0.0
+
+            self.image = frames[int(self.frame_index)]

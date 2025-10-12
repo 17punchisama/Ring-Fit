@@ -4,7 +4,7 @@ from animation_helper import load_animation_with_fallback, _ensure_animation_saf
 
 CHAR_CONFIGS = {
     "mushroom": {
-        "scale": 3.0, "speed": 2, "hp": 2, "damage": 1,
+        "scale": 2.0, "speed": 2, "hp": 2, "damage": 1,
         "assets": {
             "idle": ["graphics/enemy/mushroom/Idle.png"],
             "run": ["graphics/enemy/mushroom/Run.png"],
@@ -16,7 +16,7 @@ CHAR_CONFIGS = {
         "spawn_grace_ms": 800,
     },
     "goblin": {
-        "scale": 4.0, "speed": 2, "hp": 4, "damage": 1,
+        "scale": 2.0, "speed": 2, "hp": 4, "damage": 1,
         "assets": {
             "idle": ["graphics/enemy/goblin/Idle.png"],
             "run": ["graphics/enemy/goblin/Run.png"],
@@ -28,7 +28,7 @@ CHAR_CONFIGS = {
         "spawn_grace_ms": 800,
     },
     "skeleton": {
-        "scale": 4.0, "speed": 2, "hp": 4, "damage": 2,
+        "scale": 2.0, "speed": 2, "hp": 4, "damage": 2,
         "assets": {
             "idle": ["graphics/enemy/skeleton/Idle.png"],
             "run": ["graphics/enemy/skeleton/Walk.png"],
@@ -40,7 +40,7 @@ CHAR_CONFIGS = {
         "spawn_grace_ms": 800,
     },
     "flying eye": {
-        "scale": 3.0, "speed": 2, "hp": 2, "damage": 1,
+        "scale": 2.0, "speed": 2, "hp": 2, "damage": 1,
         "assets": {
             "idle": ["graphics/enemy/flying_eye/Flight.png"],
             "run":  ["graphics/enemy/flying_eye/Flight.png"],
@@ -50,9 +50,10 @@ CHAR_CONFIGS = {
         },
         "anim_speed": {"idle":0.18,"run":0.24,"attack":0.22,"hit":0.18,"death":0.18},
         "spawn_grace_ms": 800,
+        "spawn_y_offset": -80,
     },
     "evil": {
-        "scale": 4.0, "speed": 2, "hp": 8, "damage": 5,
+        "scale": 3.0, "speed": 2, "hp": 8, "damage": 5,
         "assets": {
             "idle": ["graphics/enemy/evil/Idle.png"],
             "run":  ["graphics/enemy/evil/Run.png"],
@@ -64,7 +65,7 @@ CHAR_CONFIGS = {
         "spawn_grace_ms": 800,
     },
     "neon phantom": {
-        "scale": 5.0, "speed": 2, "hp": 10, "damage": 7,
+        "scale": 3.0, "speed": 2, "hp": 10, "damage": 7,
         "assets": {
             "idle": ["graphics/enemy/NeonPhantom/Idle.png"],
             "run":  ["graphics/enemy/NeonPhantom/Run.png"],
@@ -76,7 +77,7 @@ CHAR_CONFIGS = {
         "spawn_grace_ms": 800,
     },
     "gorgon": {
-        "scale": 3.0, "speed": 2, "hp": 10, "damage": 7,
+        "scale": 2.0, "speed": 2, "hp": 10, "damage": 7,
         "assets": {
             "idle": ["graphics/enemy/gorgon/Idle.png"],
             "run":  ["graphics/enemy/gorgon/Run.png"],
@@ -155,7 +156,8 @@ class Enemy(pygame.sprite.Sprite):
         self.state = "run"
         self.frame_index = 0.0
         self.image = self.animations[self.state][0]
-        self.rect = self.image.get_rect(midbottom=pos)
+        spawn_y_offset = int(cfg.get("spawn_y_offset", 0))
+        self.rect = self.image.get_rect(midbottom=(pos[0], pos[1] + spawn_y_offset))
 
     def set_state(self, state):
         if self.dead and state != "death":
