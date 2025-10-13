@@ -1,7 +1,10 @@
 # main.py
 import pygame
 from sys import exit
+import sys
 import random
+import subprocess
+
 
 from player import Player
 from coin import Coin
@@ -9,10 +12,14 @@ from parallax import ParallaxBG
 
 from serial_input import poll_serial_commands, send_reset_signal
 
+
 from guide import Guide
 from enemy import Enemy
 from obstacle import Obstacle
 from projectile import Fireball  # ใช้หรือไม่ใช้ก็ได้
+
+# from character import start_game  # ฟังก์ชันไปหน้า home
+
 
 pygame.init()
 W, H = 960, 540
@@ -21,8 +28,9 @@ clock = pygame.time.Clock()
 GROUND_Y = 440
 font = pygame.font.SysFont(None, 28)
 
+chosen = sys.argv[1] if len(sys.argv) > 1 else "Unknown"
 # ---------- Player class / alt key ----------
-PLAYER_CLASS = "wizard"  # "wizard" หรือ "swordman"
+PLAYER_CLASS = chosen  # "wizard" หรือ "swordman"
 ALT_KEY = "M" if PLAYER_CLASS.lower() == "wizard" else "P"
 
 # ใช้เฉพาะเลเวล >= 3 เวลาอยู่ใน challenge (เริ่มที่ J)
@@ -103,14 +111,6 @@ guide.active = False
 # ตัวจับเวลาให้ไกด์หายเอง + ธงว่าถูกบังคับระหว่างชาเลนจ์/อุปสรรค
 guide_timer_ms = 0
 guide_forced = False
-
-
-def go_home():
-    """กลับหน้า Home"""
-    send_reset_signal()
-    pygame.quit()
-    subprocess.run(["python", "home.py"])
-    sys.exit()
 
 
 def show_guide(state_name, duration_ms=1200):
@@ -250,6 +250,15 @@ IMPULSE_MAX_MS = 300
 game_paused = False  # จะถูกเปลี่ยนโดยสัญญาณ PAUSE/RESUME จาก STM32
 pause_menu_selection = 0
 
+
+def go_home():
+    """กลับหน้า Home"""
+    send_reset_signal()
+    pygame.quit()
+    subprocess.run(["python", "home.py"])
+    sys.exit()
+
+
 # ---------- Main loop ----------
 while True:
     dt = clock.tick(60)
@@ -271,7 +280,7 @@ while True:
             in_sequence = sequence is not None
 
             # --- J ---
-            if event.key == pygame.K_j:
+            if event.key == pygame.K_j and not game_paused:
                 if in_challenge:
                     need_j = (level == 2 and challenge_expect_key == "J") or (
                         level >= 3 and challenge_expect_key == "J"
@@ -282,12 +291,11 @@ while True:
                     p.play_attack_anim_named("attack")
 
             # --- M/P (ALT) + โชว์ไกด์ตามปุ่มที่กด ---
-            if event.key in (pygame.K_m, pygame.K_p):
+            if event.key in (pygame.K_m, pygame.K_p) and not game_paused:
                 alt_ok = (ALT_KEY == "M" and event.key == pygame.K_m) or (
                     ALT_KEY == "P" and event.key == pygame.K_p
                 )
 
-                # แสดงไกด์ทันทีตามปุ่ม
                 if event.key == pygame.K_m:
                     show_guide("wizard_attack", 1200)
                 if event.key == pygame.K_p:
@@ -303,11 +311,11 @@ while True:
                 elif not in_sequence and not (p.full_lock or p.locked or p.dead):
                     p.play_attack_anim_named("attack2")
 
-            if event.key == pygame.K_r:
+            if event.key == pygame.K_r and not game_paused:
                 p.revive()
 
             # ---- Pick coin (I) ----
-            if event.key == pygame.K_i:
+            if event.key == pygame.K_i and not game_paused:
                 if getattr(p, "coin_lock", False) and coin_group.sprites():
                     coin_group.sprites()[0].kill()
                     if level == 1:
@@ -321,7 +329,10 @@ while True:
                     coins_collected += 1
 
             # --- Jump over obstacle ---
-            if event.key in (pygame.K_SPACE, pygame.K_w, pygame.K_UP):
+            if (
+                event.key in (pygame.K_SPACE, pygame.K_w, pygame.K_UP)
+                and not game_paused
+            ):
                 obstacle = (
                     obstacle_group.sprites()[0] if obstacle_group.sprites() else None
                 )
@@ -344,6 +355,7 @@ while True:
     enemy = enemy_group.sprites()[0] if enemy_group.sprites() else None
 
     serial_cmds = poll_serial_commands()
+
     for cmd in serial_cmds:
         if isinstance(cmd, dict) and cmd["type"] == "JOY":
             print(f"Joystick X={cmd['x']} Y={cmd['y']} BTN={cmd['btn']}")
@@ -370,6 +382,7 @@ while True:
         serial_run_ms = 0
         p.external_dir = 0
 
+    # ---- ควบคุม action อื่นๆ จาก serial เฉพาะตอนไม่ pause ----
     if serial_cmds and not game_paused:
         in_challenge = bool(enemy and enemy.challenge_ms_left is not None)
         in_sequence = sequence is not None
@@ -389,7 +402,6 @@ while True:
                     p.set_state("jump")
                 p.obstacle_lock = False
                 obstacle.start_pass(p)
-            # ไม่โชว์ squat ตรงนี้ — โชว์ตอน "wait" เท่านั้น
 
         if any(ch in ("J", "j") for ch in serial_cmds):
             need_j = (level == 2 and challenge_expect_key == "J") or (
@@ -406,7 +418,6 @@ while True:
                 if ALT_KEY == "M"
                 else ("P" in serial_cmds or "p" in serial_cmds)
             )
-            # แสดงไกด์แอทแทคด้วยเมื่อมีสัญญาณอนุกรม
             if "M" in serial_cmds or "m" in serial_cmds:
                 show_guide("wizard_attack", 1200)
             if "P" in serial_cmds or "p" in serial_cmds:
@@ -441,7 +452,11 @@ while True:
                 p.coin_lock = False
                 coins_collected += 1
 
-    if serial_run_ms > 0 and not (p.full_lock or p.locked or p.dead):
+    if (
+        serial_run_ms > 0
+        and not (p.full_lock or p.locked or p.dead)
+        and not game_paused
+    ):
         p.external_move = True
         p.external_dir = serial_dir
         serial_run_ms -= dt
@@ -449,147 +464,109 @@ while True:
         p.external_dir = 0
 
     # ===== Update =====
-    player_group.update(keys, GROUND_Y)
+    if not game_paused:
+        player_group.update(keys, GROUND_Y)
 
-    # enemies
-    for e in enemy_group.sprites():
-        e.update(p, dt)
-        # e.shoot_tick(p, dt, projectile_group, Fireball)  # ถ้าจะเปิดระบบยิง
+        # enemies
+        for e in enemy_group.sprites():
+            e.update(p, dt)
+            # e.shoot_tick(p, dt, projectile_group, Fireball)  # ถ้าจะเปิดระบบยิง
 
-    # ----- Guide timer -----
-    if guide_timer_ms > 0:
-        guide_timer_ms = max(0, guide_timer_ms - dt)
-        if guide_timer_ms == 0 and not guide_forced:
-            guide.visible = False
-            guide.active = False
+        # ----- Guide timer -----
+        if guide_timer_ms > 0:
+            guide_timer_ms = max(0, guide_timer_ms - dt)
+            if guide_timer_ms == 0 and not guide_forced:
+                guide.visible = False
+                guide.active = False
 
-    # ===== Props on ground =====
-    if p.is_moving:
-        prop_scroll_accum += dt * PARALLAX_SCROLL_RATE * HOUSES_LAYER_SPEED
+        # ===== Props on ground =====
+        if p.is_moving:
+            prop_scroll_accum += dt * PARALLAX_SCROLL_RATE * HOUSES_LAYER_SPEED
 
-    move_px = int(prop_scroll_accum)
-    if move_px > 0:
-        for pr in prop_group.sprites():
-            pr.rect.x -= move_px
-            if pr.rect.right < 0:
-                pr.kill()
-        next_prop_px -= move_px
-        prop_scroll_accum -= move_px
+        move_px = int(prop_scroll_accum)
+        if move_px > 0:
+            for pr in prop_group.sprites():
+                pr.rect.x -= move_px
+                if pr.rect.right < 0:
+                    pr.kill()
+            next_prop_px -= move_px
+            prop_scroll_accum -= move_px
 
-    if next_prop_px <= 0:
-        spawn_prop()
-        next_prop_px = random.randint(100, 400)
+        if next_prop_px <= 0:
+            spawn_prop()
+            next_prop_px = random.randint(100, 400)
 
-    for obs in obstacle_group.sprites():
-        obs.update(p, dt)
+        for obs in obstacle_group.sprites():
+            obs.update(p, dt)
 
-    # โปรเจกไทล์
-    for fb in projectile_group.sprites():
-        fb.update(dt, screen_w=W)
+        # โปรเจกไทล์
+        for fb in projectile_group.sprites():
+            fb.update(dt, screen_w=W)
 
-    # ===== Level 1 =====
-    if level == 1:
-        if len(coin_group) == 0:
-            spawn_coin()
-        coin = coin_group.sprites()[0] if coin_group.sprites() else None
+        # ===== Level 1 =====
+        if level == 1:
+            if len(coin_group) == 0:
+                spawn_coin()
+            coin = coin_group.sprites()[0] if coin_group.sprites() else None
 
-        if p.is_moving and not getattr(p, "coin_lock", False):
-            progress += PROGRESS_SPEED_PER_MS * dt
-            if progress > PROGRESS_TO_SPAWN:
-                progress = PROGRESS_TO_SPAWN
+            if p.is_moving and not getattr(p, "coin_lock", False):
+                progress += PROGRESS_SPEED_PER_MS * dt
+                if progress > PROGRESS_TO_SPAWN:
+                    progress = PROGRESS_TO_SPAWN
 
-        if progress >= PROGRESS_TO_SPAWN and coin:
-            if coin.rect.centerx > p.rect.centerx:
-                if p.is_moving:
-                    coin.rect.centerx -= 10
-            else:
-                if not getattr(p, "guide_shown", False):
-                    guide.set_state("collect_coin")
-                    guide.active = True
-                    guide.visible = True
-                    guide.frame_index = 0.0
-                    p.guide_shown = True
-                p.coin_lock = True
-                p.is_moving = False
-                p.set_state("idle")
-
-        if coins_collected >= COINS_TO_PASS:
-            level = 2
-            progress = 0
-            level2_progress = 0
-            challenge_expect_key = "J"
-            coin_group.empty()
-            guide.visible = False
-            guide.active = False
-            p.coin_lock = False
-            p.guide_shown = False
-
-    # ===== Level 2/3/4/5: spawn =====
-    if level in (2, 3, 4, 5):
-        no_enemy = not enemy_group.sprites()
-        no_coin = not coin_group.sprites()
-        no_obs = not obstacle_group.sprites()
-        no_event = no_enemy and no_coin and no_obs
-
-        if (sequence is None) and no_event and p.is_moving:
-            level2_progress += PROGRESS_SPEED_PER_MS * dt
-            if level2_progress > LEVEL2_PROGRESS_MAX:
-                level2_progress = LEVEL2_PROGRESS_MAX
-
-        if no_event and (level2_progress >= LEVEL2_PROGRESS_MAX):
-            level2_progress = 0.0
-
-            if level == 2:
-                if random.random() < COIN_PROB_L2:
-                    spawn_coin()
+            if progress >= PROGRESS_TO_SPAWN and coin:
+                if coin.rect.centerx > p.rect.centerx:
+                    if p.is_moving:
+                        coin.rect.centerx -= 10
                 else:
-                    etype = random.choice(["mushroom", "flying eye"])
-                    enemy_group.add(Enemy(etype, pos=(W + 120, GROUND_Y)))
+                    if not getattr(p, "guide_shown", False):
+                        guide.set_state("collect_coin")
+                        guide.active = True
+                        guide.visible = True
+                        guide.frame_index = 0.0
+                        p.guide_shown = True
+                    p.coin_lock = True
+                    p.is_moving = False
+                    p.set_state("idle")
 
-            elif level == 3:
-                if random.random() < COIN_PROB_L3:
-                    spawn_coin()
-                else:
-                    if random.random() < L3_MONSTER_VS_OBS:
-                        etype = random.choice(
-                            ["mushroom", "goblin", "skeleton", "flying eye"]
-                        )
+            if coins_collected >= COINS_TO_PASS:
+                level = 2
+                progress = 0
+                level2_progress = 0
+                challenge_expect_key = "J"
+                coin_group.empty()
+                guide.visible = False
+                guide.active = False
+                p.coin_lock = False
+                p.guide_shown = False
+
+        # ===== Level 2/3/4/5: spawn =====
+        if level in (2, 3, 4, 5):
+            no_enemy = not enemy_group.sprites()
+            no_coin = not coin_group.sprites()
+            no_obs = not obstacle_group.sprites()
+            no_event = no_enemy and no_coin and no_obs
+
+            if (sequence is None) and no_event and p.is_moving:
+                level2_progress += PROGRESS_SPEED_PER_MS * dt
+                if level2_progress > LEVEL2_PROGRESS_MAX:
+                    level2_progress = LEVEL2_PROGRESS_MAX
+
+            if no_event and (level2_progress >= LEVEL2_PROGRESS_MAX):
+                level2_progress = 0.0
+
+                if level == 2:
+                    if random.random() < COIN_PROB_L2:
+                        spawn_coin()
+                    else:
+                        etype = random.choice(["mushroom", "flying eye"])
                         enemy_group.add(Enemy(etype, pos=(W + 120, GROUND_Y)))
-                    else:
-                        spawn_obstacle()
 
-            elif level == 4:
-                if level4_kills == LEVEL4_KILL_TARGET - 1:
-                    roll = random.random()
-                    if roll < COIN_PROB_L4:
+                elif level == 3:
+                    if random.random() < COIN_PROB_L3:
                         spawn_coin()
                     else:
-                        if random.random() < L4_MONSTER_VS_OBS:
-                            enemy_group.add(Enemy("gorgon", pos=(W + 120, GROUND_Y)))
-                        else:
-                            spawn_obstacle()
-                else:
-                    roll = random.random()
-                    if roll < COIN_PROB_L4:
-                        spawn_coin()
-                    else:
-                        if random.random() < L4_MONSTER_VS_OBS:
-                            etype = random.choice(["mushroom", "goblin", "skeleton"])
-                            enemy_group.add(Enemy(etype, pos=(W + 120, GROUND_Y)))
-                        else:
-                            spawn_obstacle()
-
-            elif level == 5:
-                roll = random.random()
-                if level5_force_boss_next:
-                    level5_force_boss_next = False
-                    boss_type = random.choice(["evil", "neon phantom", "gorgon"])
-                    enemy_group.add(Enemy(boss_type, pos=(W + 120, GROUND_Y)))
-                else:
-                    if roll < COIN_PROB_L4:
-                        spawn_coin()
-                    else:
-                        if random.random() < L4_MONSTER_VS_OBS:
+                        if random.random() < L3_MONSTER_VS_OBS:
                             etype = random.choice(
                                 ["mushroom", "goblin", "skeleton", "flying eye"]
                             )
@@ -597,251 +574,146 @@ while True:
                         else:
                             spawn_obstacle()
 
-        coin = coin_group.sprites()[0] if coin_group.sprites() else None
-        if coin:
-            if not getattr(p, "coin_lock", False):
-                if coin.rect.centerx > p.rect.centerx:
-                    if p.is_moving:
-                        coin.rect.centerx -= 10
-                else:
-                    p.coin_lock = True
-                    p.is_moving = False
-                    p.set_state("idle")
+                elif level == 4:
+                    if level4_kills == LEVEL4_KILL_TARGET - 1:
+                        roll = random.random()
+                        if roll < COIN_PROB_L4:
+                            spawn_coin()
+                        else:
+                            if random.random() < L4_MONSTER_VS_OBS:
+                                enemy_group.add(
+                                    Enemy("gorgon", pos=(W + 120, GROUND_Y))
+                                )
+                            else:
+                                spawn_obstacle()
+                    else:
+                        roll = random.random()
+                        if roll < COIN_PROB_L4:
+                            spawn_coin()
+                        else:
+                            if random.random() < L4_MONSTER_VS_OBS:
+                                etype = random.choice(
+                                    ["mushroom", "goblin", "skeleton"]
+                                )
+                                enemy_group.add(Enemy(etype, pos=(W + 120, GROUND_Y)))
+                            else:
+                                spawn_obstacle()
 
-    # ===== Challenge countdown =====
-    enemy = enemy_group.sprites()[0] if enemy_group.sprites() else None
-    if enemy and enemy.challenge_ms_left is not None and not frame_resolved:
-        enemy.challenge_ms_left -= dt
-        if enemy.challenge_ms_left <= 0 and sequence is None:
-            delta = p.attack_pressed_total - enemy.player_attack_baseline
-            p.attack_pressed_total = 0
-            enemy.challenge_ms_left = None
-            p.set_challenge_lock(False)
+                elif level == 5:
+                    roll = random.random()
+                    if level5_force_boss_next:
+                        level5_force_boss_next = False
+                        boss_type = random.choice(["evil", "neon phantom", "gorgon"])
+                        enemy_group.add(Enemy(boss_type, pos=(W + 120, GROUND_Y)))
+                    else:
+                        if roll < COIN_PROB_L4:
+                            spawn_coin()
+                        else:
+                            if random.random() < L4_MONSTER_VS_OBS:
+                                etype = random.choice(
+                                    ["mushroom", "goblin", "skeleton", "flying eye"]
+                                )
+                                enemy_group.add(Enemy(etype, pos=(W + 120, GROUND_Y)))
+                            else:
+                                spawn_obstacle()
 
-            need_delta = getattr(enemy, "required_delta", 3)
+            coin = coin_group.sprites()[0] if coin_group.sprites() else None
+            if coin:
+                if not getattr(p, "coin_lock", False):
+                    if coin.rect.centerx > p.rect.centerx:
+                        if p.is_moving:
+                            coin.rect.centerx -= 10
+                    else:
+                        p.coin_lock = True
+                        p.is_moving = False
+                        p.set_state("idle")
 
-            if delta >= need_delta:
-                enemy.hp -= 1
-
-                if level >= 3:
-                    just_used_key = challenge_expect_key
-                    challenge_expect_key = (
-                        ALT_KEY if challenge_expect_key == "J" else "J"
-                    )
-                    anim = "attack2" if (just_used_key == ALT_KEY) else "attack"
-                else:
-                    challenge_expect_key = "J"
-                    anim = "attack"
-
-                if enemy.hp <= 0:
-                    if level == 2:
-                        level2_kills += 1
-                    elif level == 3:
-                        level3_kills += 1
-                    elif level == 4:
-                        level4_kills += 1
-                    elif level == 5:
-                        level5_kills_total += 1
-                        level5_cycle_kills += 1
-                        if level5_cycle_kills >= LEVEL5_CYCLE_TARGET:
-                            level5_cycle_kills = 0
-                            level5_force_boss_next = True
-                    sequence = start_sequence(["player_attack", "enemy_death"])
-                else:
-                    sequence = start_sequence(["player_attack", "enemy_hit"])
-
-                sequence["attack_anim"] = anim
-                frame_resolved = True
-
-            else:
-                if level >= 3:
-                    challenge_expect_key = (
-                        ALT_KEY if challenge_expect_key == "J" else "J"
-                    )
-                else:
-                    challenge_expect_key = "J"
-                sequence = start_sequence(["enemy_attack", "player_hit"])
-                frame_resolved = True
-
-    # ===== Force guide while challenge OR obstacle(wait) =====
-    # 1) Challenge: บังคับโชว์ตามปุ่มที่ต้องกด
-    enemy = enemy_group.sprites()[0] if enemy_group.sprites() else None
-    # ===== Force guide while coin-lock / challenge / obstacle(wait) =====
-    forced_now = False
-
-    # 0) Coin-lock (เลเวล 1 ขณะต้องเก็บเหรียญ) -> บังคับโชว์ collect_coin
-    if getattr(p, "coin_lock", False):
-        desired = "collect_coin"
-        if guide.state != desired or not guide.visible:
-            guide.set_state(desired)
-            guide.visible = True
-            guide.active = True
-            guide.frame_index = 0.0
-        forced_now = True
-
-    # 1) Challenge ...
-    enemy = enemy_group.sprites()[0] if enemy_group.sprites() else None
-    if enemy and enemy.challenge_ms_left:
-        need_key = challenge_expect_key if level >= 3 else "J"
-        if need_key == "J":
-            desired = "squeeze"
-        else:
-            desired = "wizard_attack" if ALT_KEY == "M" else "swordman_attack"
-        if guide.state != desired or not guide.visible:
-            guide.set_state(desired)
-            guide.visible = True
-            guide.active = True
-            guide.frame_index = 0.0
-        forced_now = True
-
-    # 2) Obstacle wait -> squat
-    obs = obstacle_group.sprites()[0] if obstacle_group.sprites() else None
-    if obs and getattr(obs, "state", "") == "wait":
-        if guide.state != "squat" or not guide.visible:
-            guide.set_state("squat")
-            guide.visible = True
-            guide.active = True
-            guide.frame_index = 0.0
-        forced_now = True
-
-    guide_forced = forced_now
-    if not guide_forced and guide_timer_ms == 0:
-        guide.visible = False
-        guide.active = False
-
-    # ===== Run sequence =====
-    if sequence and enemy:
-        step = sequence["steps"][sequence["idx"]]
-
-        if step == "player_attack":
-            if not sequence["started"]:
-                desired = sequence.get("attack_anim", "attack")
-                if desired not in ("attack", "attack2") or (
-                    desired not in p.animations
-                ):
-                    desired = "attack"
-                p.play_attack_anim_named(desired, ignore_locked=True)
-                sequence["started"] = True
-
-            if p.just_finished in ("attack", "attack2"):
-                sequence["idx"] += 1
-                sequence["started"] = False
-
-        elif step == "enemy_hit":
-            if not sequence["started"]:
-                enemy.locked = True
-                enemy.set_state("hit")
-                sequence["started"] = True
-            if enemy.just_finished == "hit":
-                sequence["idx"] += 1
-                sequence["started"] = False
-
-        elif step == "enemy_death":
-            if not sequence["started"]:
-                enemy.locked = True
-                enemy.set_state("death")
-                sequence["started"] = True
-            if enemy.just_finished == "death":
+        # ===== Challenge countdown =====
+        enemy = enemy_group.sprites()[0] if enemy_group.sprites() else None
+        if enemy and enemy.challenge_ms_left is not None and not frame_resolved:
+            enemy.challenge_ms_left -= dt
+            if enemy.challenge_ms_left <= 0 and sequence is None:
+                delta = p.attack_pressed_total - enemy.player_attack_baseline
+                p.attack_pressed_total = 0
                 enemy.challenge_ms_left = None
-                enemy.dead = True
-                enemy.kill()
-                enemy_group.empty()
-                level2_progress = 0.0
-                p.set_full_lock(False)
                 p.set_challenge_lock(False)
-                p.locked = False
-                if p.on_ground:
-                    p.set_state("idle")
-                sequence = None
-                enemy = None
 
-        elif step == "enemy_attack":
-            if not sequence["started"]:
-                enemy.locked = True
-                enemy.set_state("attack")
-                sequence["started"] = True
-            if enemy.just_finished == "attack":
-                dmg = getattr(enemy, "damage", 1)
-                p.start_hit(damage=dmg)
-                sequence["idx"] += 1
-                sequence["started"] = False
+                need_delta = getattr(enemy, "required_delta", 3)
 
-        elif step == "player_hit":
-            if not sequence["started"]:
-                sequence["started"] = True
-            if p.just_finished == "hit":
-                sequence["idx"] += 1
-                sequence["started"] = False
+                if delta >= need_delta:
+                    enemy.hp -= 1
 
-        if sequence and sequence["idx"] >= len(sequence["steps"]):
+                    if level >= 3:
+                        just_used_key = challenge_expect_key
+                        challenge_expect_key = (
+                            ALT_KEY if challenge_expect_key == "J" else "J"
+                        )
+                        anim = "attack2" if (just_used_key == ALT_KEY) else "attack"
+                    else:
+                        challenge_expect_key = "J"
+                        anim = "attack"
+
+                    if enemy.hp <= 0:
+                        if level == 2:
+                            level2_kills += 1
+                        elif level == 3:
+                            level3_kills += 1
+                        elif level == 4:
+                            level4_kills += 1
+                        elif level == 5:
+                            level5_kills_total += 1
+                            level5_cycle_kills += 1
+                            if level5_cycle_kills >= LEVEL5_CYCLE_TARGET:
+                                level5_cycle_kills = 0
+                                level5_force_boss_next = True
+                        sequence = start_sequence(["player_attack", "enemy_death"])
+                    else:
+                        sequence = start_sequence(["player_attack", "enemy_hit"])
+
+                    sequence["attack_anim"] = anim
+                    frame_resolved = True
+
+                else:
+                    if level >= 3:
+                        challenge_expect_key = (
+                            ALT_KEY if challenge_expect_key == "J" else "J"
+                        )
+                    else:
+                        challenge_expect_key = "J"
+                    sequence = start_sequence(["enemy_attack", "player_hit"])
+                    frame_resolved = True
+
+        # ----- Orphan sequence cleanup -----
+        if sequence is not None and not enemy_group.sprites():
             sequence = None
+
+        # ===== Centralize locks =====
+        enemy = enemy_group.sprites()[0] if enemy_group.sprites() else None
+        in_sequence = sequence is not None
+        in_challenge = bool(enemy and enemy.challenge_ms_left is not None)
+        in_approach = bool(
+            enemy and enemy.challenge_ms_left is None and enemy.state == "run"
+        )
+        in_combat = bool(enemy) and (in_sequence or in_challenge or in_approach)
+
+        p.set_full_lock(in_combat)
+        p.set_challenge_lock(in_challenge)
+
+        if not in_combat:
+            p.locked = False
+            p.set_challenge_lock(False)
+            if p.on_ground and p.state not in ("idle", "run"):
+                p.set_state("idle")
+
+        if pending_start_next:
             e2 = enemy_group.sprites()[0] if enemy_group.sprites() else None
             if e2 and not e2.dead:
-                pending_start_next = True
-
-    # ===== Level up =====
-    if level == 2 and level2_kills >= LEVEL2_KILL_TARGET:
-        level2_kills = 0
-        level = 3
-        level2_progress = 0
-        enemy_group.empty()
-        coin_group.empty()
-        obstacle_group.empty()
-        challenge_expect_key = "J"
-
-    if level == 3 and level3_kills >= LEVEL3_KILL_TARGET:
-        level3_kills = 0
-        level = 4
-        level2_progress = 0
-        enemy_group.empty()
-        coin_group.empty()
-        obstacle_group.empty()
-        challenge_expect_key = "J"
-
-    if level == 4 and level4_kills >= LEVEL4_KILL_TARGET:
-        level = 5
-        level2_progress = 0.0
-        enemy_group.empty()
-        coin_group.empty()
-        obstacle_group.empty()
-        projectile_group.empty()
-        p.set_full_lock(False)
-        p.set_challenge_lock(False)
-
-    # ----- Orphan sequence cleanup -----
-    if sequence is not None and not enemy_group.sprites():
-        sequence = None
-
-    # ===== Centralize locks =====
-    enemy = enemy_group.sprites()[0] if enemy_group.sprites() else None
-    in_sequence = sequence is not None
-    in_challenge = bool(enemy and enemy.challenge_ms_left is not None)
-    in_approach = bool(
-        enemy and enemy.challenge_ms_left is None and enemy.state == "run"
-    )
-    in_combat = bool(enemy) and (in_sequence or in_challenge or in_approach)
-
-    p.set_full_lock(in_combat)
-    p.set_challenge_lock(in_challenge)
-
-    if not in_combat:
-        p.locked = False
-        p.set_challenge_lock(False)
-        if p.on_ground and p.state not in ("idle", "run"):
-            p.set_state("idle")
-
-    if pending_start_next:
-        e2 = enemy_group.sprites()[0] if enemy_group.sprites() else None
-        if e2 and not e2.dead:
-            e2.start_challenge(p)
-        pending_start_next = False
+                e2.start_challenge(p)
+            pending_start_next = False
 
     # ===== Draw =====
     screen.fill((30, 30, 30))
     pygame.draw.line(screen, (70, 70, 70), (0, GROUND_Y), (W, GROUND_Y), 2)
-    parallax.update(p.is_moving, dt)
-    parallax.draw(screen)
-    prop_group.draw(screen)
 
     # พอ pause ให้หยุด parallax ด้วย (ส่ง dt=0 และ is_moving=False)
     if not game_paused:
