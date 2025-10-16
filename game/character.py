@@ -3,6 +3,7 @@ import sys
 import serial
 import subprocess
 from pathlib import Path
+from player import Player
 
 # --------- Serial Config (STM32) ----------
 PORT = "COM3"  # 👈 เปลี่ยนให้ตรงกับพอร์ตจริง
@@ -21,7 +22,13 @@ screen = pygame.display.set_mode((TARGET_WIDTH, TARGET_HEIGHT))
 pygame.display.set_caption("FITRING Adventure - Character Select")
 
 # --------- โหลด assets ----------
+
 ASSET_DIR = Path(__file__).parent
+
+# PLAYER_CLASS = "wizard"         # "wizard" หรือ "swordman"
+wizard_group = pygame.sprite.GroupSingle(Player("wizard", (210, 330)))
+swordman_group = pygame.sprite.GroupSingle(Player("swordman", (630, 330)))
+
 bg_path = ASSET_DIR / "pg/bg1.png"
 char1_path = ASSET_DIR / "pg/loongmadsaifah.png"
 char2_path = ASSET_DIR / "pg/nakdablangkhom.png"
@@ -98,6 +105,9 @@ speed = 10
 btn_prev = 0
 stm32_btn_prev = 0
 
+wizard = wizard_group.sprite
+swordman = swordman_group.sprite
+
 
 # --------- ฟังก์ชัน ----------
 def go_to_home():
@@ -138,9 +148,9 @@ while running:
             if circlebox_rect.collidepoint(event.pos):
                 go_to_home()
             elif char1_rect.collidepoint(event.pos):
-                start_game("char1")
+                start_game("wizard")
             elif char2_rect.collidepoint(event.pos):
-                start_game("char2")
+                start_game("swordman")
 
     # --- อ่านค่าจาก STM32 ---
     line = ser.readline().decode(errors="ignore").strip()
@@ -167,9 +177,9 @@ while running:
                 if circlebox_rect.collidepoint((cursor_x, cursor_y)):
                     go_to_home()
                 elif char1_rect.collidepoint((cursor_x, cursor_y)):
-                    start_game("char1")
+                    start_game("wizard")
                 elif char2_rect.collidepoint((cursor_x, cursor_y)):
-                    start_game("char2")
+                    start_game("swordman")
                 else:
                     print("[JOY] ปุ่มถูกกด แต่ไม่ได้ชี้ปุ่มใด")
             btn_prev = btn
@@ -182,9 +192,9 @@ while running:
             if circlebox_rect.collidepoint((cursor_x, cursor_y)):
                 go_to_home()
             elif char1_rect.collidepoint((cursor_x, cursor_y)):
-                start_game("char1")
+                start_game("wizard")
             elif char2_rect.collidepoint((cursor_x, cursor_y)):
-                start_game("char2")
+                start_game("swordman")
         stm32_btn_prev = 1
     else:
         stm32_btn_prev = 0
@@ -247,6 +257,15 @@ while running:
     if arrow_img:
         screen.blit(arrow_img, arrow_rect)
 
+    keys = pygame.key.get_pressed()
+
+    wizard.set_state("idle")
+    wizard.update(keys, 340)
+    wizard_group.draw(screen)
+
+    swordman.set_state("idle")
+    swordman.update(keys, 340)
+    swordman_group.draw(screen)
     # ✅ เคอร์เซอร์เรืองแสงเหมือนหน้า Home + glow ตอน hover
     if hovering:
         # วาดวงเรืองแสงรอบเคอร์เซอร์ (เมื่อ hover)
