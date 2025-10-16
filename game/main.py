@@ -2,12 +2,15 @@
 import pygame
 from sys import exit
 import random
+import subprocess
 
 from player import Player
 from coin import Coin
 from parallax import ParallaxBG
 
 from serial_input import poll_serial_commands, send_reset_signal
+import sys
+
 
 from guide import Guide
 from enemy import Enemy
@@ -21,28 +24,30 @@ clock = pygame.time.Clock()
 GROUND_Y = 440
 font = pygame.font.SysFont(None, 28)
 
+chosen = sys.argv[1] if len(sys.argv) > 1 else "Unknown"
+
 # ---------- Player class / alt key ----------
-PLAYER_CLASS = "wizard"  # "wizard" หรือ "swordman"
+PLAYER_CLASS = chosen  # "wizard" หรือ "swordman"
 ALT_KEY = "M" if PLAYER_CLASS.lower() == "wizard" else "P"
 
 # ใช้เฉพาะเลเวล >= 3 เวลาอยู่ใน challenge (เริ่มที่ J)
 challenge_expect_key = "J"
 
 # ---------- Game variables ----------
-level = 3
+level = 1
 coins_collected = 0
-COINS_TO_PASS = 10
+COINS_TO_PASS = 3
 
 # Lv2
 level2_kills = 0
-LEVEL2_KILL_TARGET = 5
+LEVEL2_KILL_TARGET = 2
 
 # Lv3
 level3_kills = 0
-LEVEL3_KILL_TARGET = 10
+LEVEL3_KILL_TARGET = 3
 
 # Lv4 (บอสไฟ)
-level4_kills = 0
+level4_kills = 14
 LEVEL4_KILL_TARGET = 15
 
 # Lv5 (ลูป)
@@ -62,8 +67,8 @@ level2_progress = 0.0
 sequence = None
 
 # Spawn rates
-COIN_PROB_L2 = 0.75
-COIN_PROB_L3 = 0.50
+COIN_PROB_L2 = 0.25
+COIN_PROB_L3 = 0.25
 COIN_PROB_L4 = 0.25
 L3_MONSTER_VS_OBS = 0.75
 L4_MONSTER_VS_OBS = 0.90
@@ -105,10 +110,29 @@ guide_timer_ms = 0
 guide_forced = False
 
 
+# def go_home():
+#     """กลับหน้า Home"""
+#     send_reset_signal()
+#     pygame.quit()
+#     subprocess.run(["python", "home.py"])
+#     sys.exit()
+
+
 def go_home():
     """กลับหน้า Home"""
-    send_reset_signal()
+    try:
+        from serial_input import ser
+
+        if ser and ser.is_open:
+            ser.close()
+            print("🔌 Closed COM3 before launching home.py")
+    except Exception as e:
+        print("⚠️ Could not close serial port:", e)
+
+    send_reset_signal()  # ส่ง R ไป STM32
     pygame.quit()
+    import subprocess
+
     subprocess.run(["python", "home.py"])
     sys.exit()
 
@@ -250,6 +274,81 @@ IMPULSE_MAX_MS = 300
 game_paused = False  # จะถูกเปลี่ยนโดยสัญญาณ PAUSE/RESUME จาก STM32
 pause_menu_selection = 0
 
+pause_menu_items = ["Resume", "Exit"]
+pause_input_cooldown = 0
+
+
+def show_game_over():
+    """แสดงหน้า Game Over แล้วรอให้ผู้เล่นเลือกว่าจะกลับหน้า Home โดยกดปุ่ม Joystick"""
+    overlay = pygame.Surface((W, H))
+    overlay.fill((0, 0, 0))
+    overlay.set_alpha(200)
+    screen.blit(overlay, (0, 0))
+
+    game_over_font = pygame.font.SysFont(None, 72)
+    small_font = pygame.font.SysFont(None, 36)
+
+    text = game_over_font.render("GAME OVER", True, (255, 0, 0))
+    sub = small_font.render("Press Joystick to go Home", True, (255, 255, 255))
+
+    screen.blit(text, text.get_rect(center=(W // 2, H // 2 - 40)))
+    screen.blit(sub, sub.get_rect(center=(W // 2, H // 2 + 40)))
+    pygame.display.flip()
+
+    # 🔄 ส่งสัญญาณรีเซ็ตไป STM32 ทันทีที่ Game Over
+    try:
+        from serial_input import ser
+
+        if ser:
+            ser.write(b"R\n")
+            ser.flush()
+            print("📤 Sent 'R' to  STM32 (reset LCD/Game Over)")
+    except Exception as e:
+        print("⚠️ Could not send reset signal:", e)
+
+    # 🎮 รอ input จากผู้เล่น
+    waiting = True
+    while waiting:
+        # ✅ อ่านจาก serial (ปุ่ม joystick)
+        serial_cmds = poll_serial_commands()
+        for cmd in serial_cmds:
+            # กรณีข้อมูลมาจาก dictionary แบบ {"type":"JOY", "x":..., "y":..., "btn":...}
+            if isinstance(cmd, dict) and cmd.get("type") == "JOY":
+                if cmd.get("btn") == 1:  # ปุ่มถูกกด
+                    print("🏠 Joystick button pressed — returning Home")
+                    go_home()
+
+            # ถ้าเป็นข้อความทั่วไป (เช่น "BTN" หรือ "I" "J" "M" ที่มาจาก MCU)
+            elif cmd == "BTN" or cmd == "R":
+                print("🏠 Joystick button signal — returning Home")
+                go_home()
+
+        # ✅ รองรับกดจากคีย์บอร์ดด้วย (ใช้ตอนเทสต์)
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                send_reset_signal()
+                pygame.quit()
+                sys.exit()
+
+            elif event.type == pygame.KEYDOWN:
+                if event.key in (pygame.K_SPACE, pygame.K_RETURN):
+                    print("🏠 Space/Enter pressed — returning Home")
+                    go_home()
+
+
+# 🎵 Initialize mixer
+pygame.mixer.init()
+
+# โหลดและเล่นเพลงพื้นหลัง (.wav)
+try:
+    pygame.mixer.music.load("sounds/bgm.wav")
+    pygame.mixer.music.set_volume(0.5)  # ปรับระดับเสียง (0.0 - 1.0)
+    pygame.mixer.music.play(-1)  # ✅ เล่นวนลูป (-1 = วนไม่จำกัด)
+    print("🎶 BGM started looping.")
+except Exception as e:
+    print("⚠️ Failed to load or play BGM:", e)
+
+
 # ---------- Main loop ----------
 while True:
     dt = clock.tick(60)
@@ -351,19 +450,97 @@ while True:
             # หยุดเกม
             pass
         elif cmd == "RESUME":
+            pygame.mixer.music.unpause()
             # เล่นต่อ
             pass
 
     # ---- รับคำสั่ง PAUSE/RESUME จาก STM32 (COM3) ----
     if "PAUSE" in serial_cmds:
         if not game_paused:
+            pygame.mixer.music.pause()  # ⏸ หยุดเพลง
             print("⏸ Game paused from STM32")
+            try:
+                from serial_input import ser
+
+                if ser:
+                    ser.write(b"P\n")
+                    ser.flush()
+                    print("📤 Sent 'P' to STM32 (pause timer)")
+            except Exception as e:
+                print("⚠️ Could not send P:", e)
         game_paused = True
 
     if "RESUME" in serial_cmds:
         if game_paused:
+            pygame.mixer.music.unpause()
             print("▶️ Game resumed from STM32")
         game_paused = False
+
+    # ====== Pause menu joystick control ======
+    if game_paused:
+        for cmd in serial_cmds:
+            if isinstance(cmd, dict) and cmd["type"] == "JOY":
+                y_val = cmd["y"]
+                btn_val = cmd["btn"]
+
+                center_y = 2054
+                deadzone = 300
+
+                # ป้องกัน input ซ้ำเร็วเกินไป
+                if pause_input_cooldown > 0:
+                    pause_input_cooldown -= dt
+                    continue
+
+                # ✅ ใช้ joystick แกน Y เพื่อเลื่อน
+                if y_val > center_y + deadzone:
+                    pause_menu_selection = (pause_menu_selection + 1) % len(
+                        pause_menu_items
+                    )
+                    pause_input_cooldown = 300  # หน่วง 0.3 วินาที
+                elif y_val < center_y - deadzone:
+                    pause_menu_selection = (pause_menu_selection - 1) % len(
+                        pause_menu_items
+                    )
+                    pause_input_cooldown = 300
+
+                # ✅ กดปุ่ม joystick เพื่อเลือก
+                if btn_val == 1:
+                    if pause_menu_selection == 0:
+                        # ✅ Resume
+                        game_paused = False
+                        print("▶️ Resume selected by joystick")
+
+                        # ส่งสัญญาณให้ STM32 นับเวลาต่อ
+                        try:
+                            from serial_input import ser
+
+                            if ser:
+                                ser.write(b"S\n")
+                                ser.flush()
+                                print("📤 Sent 'S' to STM32 (resume timer)")
+                        except Exception as e:
+                            print("⚠️ Could not send S:", e)
+
+                    elif pause_menu_selection == 1:
+                        print("🏠 Exit selected by joystick")
+                        try:
+                            from serial_input import ser
+
+                            if ser:
+                                ser.write(b"R\n")
+                                ser.flush()
+                                print("📤 Sent 'R' to STM32 (reset LCD)")
+                        except Exception as e:
+                            print("⚠️ Could not send R:", e)
+
+                        pygame.mixer.music.stop()
+                        pygame.quit()
+                        go_home()
+                        sys.exit()
+
+                    # elif pause_menu_selection == 1:
+                    #     print("🏠 Exit selected by joystick")
+                    #     go_home()
 
     # ถ้าหยุดเกม ให้หยุดแรงขับการเดินที่มาจาก serial ด้วย
     if game_paused:
@@ -449,43 +626,43 @@ while True:
         p.external_dir = 0
 
     # ===== Update =====
-    player_group.update(keys, GROUND_Y)
+    if not game_paused:
+        player_group.update(keys, GROUND_Y)
 
-    # enemies
-    for e in enemy_group.sprites():
-        e.update(p, dt)
-        # e.shoot_tick(p, dt, projectile_group, Fireball)  # ถ้าจะเปิดระบบยิง
+        # enemies
+        for e in enemy_group.sprites():
+            e.update(p, dt)
 
-    # ----- Guide timer -----
-    if guide_timer_ms > 0:
-        guide_timer_ms = max(0, guide_timer_ms - dt)
-        if guide_timer_ms == 0 and not guide_forced:
-            guide.visible = False
-            guide.active = False
+        # ----- Guide timer -----
+        if guide_timer_ms > 0:
+            guide_timer_ms = max(0, guide_timer_ms - dt)
+            if guide_timer_ms == 0 and not guide_forced:
+                guide.visible = False
+                guide.active = False
 
-    # ===== Props on ground =====
-    if p.is_moving:
-        prop_scroll_accum += dt * PARALLAX_SCROLL_RATE * HOUSES_LAYER_SPEED
+        # ===== Props on ground =====
+        if p.is_moving:
+            prop_scroll_accum += dt * PARALLAX_SCROLL_RATE * HOUSES_LAYER_SPEED
 
-    move_px = int(prop_scroll_accum)
-    if move_px > 0:
-        for pr in prop_group.sprites():
-            pr.rect.x -= move_px
-            if pr.rect.right < 0:
-                pr.kill()
-        next_prop_px -= move_px
-        prop_scroll_accum -= move_px
+        move_px = int(prop_scroll_accum)
+        if move_px > 0:
+            for pr in prop_group.sprites():
+                pr.rect.x -= move_px
+                if pr.rect.right < 0:
+                    pr.kill()
+            next_prop_px -= move_px
+            prop_scroll_accum -= move_px
 
-    if next_prop_px <= 0:
-        spawn_prop()
-        next_prop_px = random.randint(100, 400)
+        if next_prop_px <= 0:
+            spawn_prop()
+            next_prop_px = random.randint(100, 400)
 
-    for obs in obstacle_group.sprites():
-        obs.update(p, dt)
+        for obs in obstacle_group.sprites():
+            obs.update(p, dt)
 
-    # โปรเจกไทล์
-    for fb in projectile_group.sprites():
-        fb.update(dt, screen_w=W)
+        # โปรเจกไทล์
+        for fb in projectile_group.sprites():
+            fb.update(dt, screen_w=W)
 
     # ===== Level 1 =====
     if level == 1:
@@ -934,10 +1111,10 @@ while True:
             )
             screen.blit(txt_delta, (20, 108))
 
-    hint = font.render(
-        f"J = attack, ALT = {ALT_KEY}, I = collect coin, R = Revive", True, (0, 0, 0)
-    )
-    screen.blit(hint, (20, 132))
+    # hint = font.render(
+    #     f"J = attack, ALT = {ALT_KEY}, I = collect coin, R = Revive", True, (0, 0, 0)
+    # )
+    # screen.blit(hint, (20, 132))
 
     # ===== Overlay เมื่อ pause =====
     if game_paused:
@@ -945,7 +1122,21 @@ while True:
         overlay.set_alpha(180)
         overlay.fill((0, 0, 0))
         screen.blit(overlay, (0, 0))
-        pause_txt = font.render("GAME PAUSED", True, (255, 255, 255))
-        screen.blit(pause_txt, pause_txt.get_rect(center=(W // 2, H // 2)))
+
+        # วาดหัวข้อ
+        title = font.render("GAME PAUSED", True, (255, 255, 255))
+        screen.blit(title, title.get_rect(center=(W // 2, H // 2 - 80)))
+
+        # วาดเมนูแต่ละตัว
+        for i, item in enumerate(pause_menu_items):
+            color = (255, 255, 0) if i == pause_menu_selection else (200, 200, 200)
+            text = font.render(item, True, color)
+            rect = text.get_rect(center=(W // 2, H // 2 + i * 40))
+            screen.blit(text, rect)
+
+    # ===== ตรวจสอบถ้าตายหมดหัวใจ =====
+    if p.dead or p.hp <= 0:
+        print("💀 Player is dead — showing Game Over")
+        show_game_over()
 
     pygame.display.flip()
